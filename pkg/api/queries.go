@@ -98,11 +98,14 @@ type Project struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	State       string     `json:"state"`
+	Priority    int        `json:"priority"`
 	Progress    float64    `json:"progress"`
 	StartDate   *string    `json:"startDate"`
 	TargetDate  *string    `json:"targetDate"`
-	Lead        *User      `json:"lead"`
-	Teams       *Teams     `json:"teams"`
+	Lead        *User         `json:"lead"`
+	Teams       *Teams        `json:"teams"`
+	Initiatives *Initiatives  `json:"initiatives"`
+	Labels      *Labels       `json:"labels"`
 	URL         string     `json:"url"`
 	Icon        *string    `json:"icon"`
 	Color       string     `json:"color"`
@@ -229,6 +232,10 @@ type Initiative struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+type Initiatives struct {
+	Nodes []Initiative `json:"nodes"`
 }
 
 type PageInfo struct {
@@ -881,6 +888,7 @@ func (c *Client) GetProjects(ctx context.Context, filter map[string]interface{},
 					name
 					description
 					state
+					priority
 					progress
 					startDate
 					targetDate
@@ -944,6 +952,7 @@ func (c *Client) GetProject(ctx context.Context, id string) (*Project, error) {
 				description
 				content
 				state
+				priority
 				progress
 				health
 				scope
@@ -960,6 +969,19 @@ func (c *Client) GetProject(ctx context.Context, id string) (*Project, error) {
 				slackNewIssue
 				slackIssueComments
 				slackIssueStatuses
+				initiatives {
+					nodes {
+						id
+						name
+					}
+				}
+				labels {
+					nodes {
+						id
+						name
+						color
+					}
+				}
 				lead {
 					id
 					name
@@ -1644,4 +1666,61 @@ func (c *Client) ArchiveProject(ctx context.Context, id string) (bool, error) {
 	}
 
 	return response.ProjectArchive.Success, nil
+}
+
+// UpdateProject updates a project by ID with partial field updates
+func (c *Client) UpdateProject(ctx context.Context, id string, input map[string]interface{}) (*Project, error) {
+	query := `
+		mutation UpdateProject($id: String!, $input: ProjectUpdateInput!) {
+			projectUpdate(id: $id, input: $input) {
+				success
+				project {
+					id
+					name
+					description
+					state
+					priority
+					progress
+					startDate
+					targetDate
+					url
+					icon
+					color
+					createdAt
+					updatedAt
+					lead {
+						id
+						name
+						email
+					}
+					teams {
+						nodes {
+							id
+							key
+							name
+						}
+					}
+				}
+			}
+		}
+	`
+
+	variables := map[string]interface{}{
+		"id":    id,
+		"input": input,
+	}
+
+	var response struct {
+		ProjectUpdate struct {
+			Success bool    `json:"success"`
+			Project Project `json:"project"`
+		} `json:"projectUpdate"`
+	}
+
+	err := c.Execute(ctx, query, variables, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response.ProjectUpdate.Project, nil
 }

@@ -22,6 +22,7 @@ type projectAPI interface {
     GetTeam(ctx context.Context, key string) (*api.Team, error)
     GetProjects(ctx context.Context, filter map[string]interface{}, first int, after string, orderBy string) (*api.Projects, error)
     CreateProject(ctx context.Context, input map[string]interface{}) (*api.Project, error)
+    UpdateProject(ctx context.Context, id string, input map[string]interface{}) (*api.Project, error)
     ArchiveProject(ctx context.Context, id string) (bool, error)
     GetProject(ctx context.Context, id string) (*api.Project, error)
 }
@@ -153,6 +154,9 @@ var projectListCmd = &cobra.Command{
 				fmt.Printf("## %s\n", project.Name)
 				fmt.Printf("- **ID**: %s\n", project.ID)
 				fmt.Printf("- **State**: %s\n", project.State)
+				if project.Priority > 0 {
+					fmt.Printf("- **Priority**: %d\n", project.Priority)
+				}
 				fmt.Printf("- **Progress**: %.0f%%\n", project.Progress*100)
 				if project.Lead != nil {
 					fmt.Printf("- **Lead**: %s\n", project.Lead.Name)
@@ -187,7 +191,7 @@ var projectListCmd = &cobra.Command{
 			return
 		} else {
 			// Table output
-			headers := []string{"Name", "State", "Lead", "Teams", "Created", "Updated", "URL"}
+			headers := []string{"Name", "State", "Priority", "Lead", "Teams", "Created", "Updated", "URL"}
 			rows := [][]string{}
 
 			for _, project := range projects.Nodes {
@@ -220,9 +224,16 @@ var projectListCmd = &cobra.Command{
 					stateColor = color.New(color.FgRed)
 				}
 
+				// Format priority
+				priorityStr := fmt.Sprintf("%d", project.Priority)
+				if project.Priority == 0 {
+					priorityStr = "-"
+				}
+
 				rows = append(rows, []string{
 					truncateString(project.Name, 25),
 					stateColor.Sprint(project.State),
+					priorityStr,
 					lead,
 					teams,
 					project.CreatedAt.Format("2006-01-02"),
@@ -291,9 +302,32 @@ var projectGetCmd = &cobra.Command{
 			fmt.Printf("- **ID**: %s\n", project.ID)
 			fmt.Printf("- **Slug ID**: %s\n", project.SlugId)
 			fmt.Printf("- **State**: %s\n", project.State)
+			if project.Priority > 0 {
+				fmt.Printf("- **Priority**: %d\n", project.Priority)
+			}
 			fmt.Printf("- **Progress**: %.0f%%\n", project.Progress*100)
 			fmt.Printf("- **Health**: %s\n", project.Health)
 			fmt.Printf("- **Scope**: %d\n", project.Scope)
+			if project.Initiatives != nil && len(project.Initiatives.Nodes) > 0 {
+				initiatives := ""
+				for i, initiative := range project.Initiatives.Nodes {
+					if i > 0 {
+						initiatives += ", "
+					}
+					initiatives += initiative.Name
+				}
+				fmt.Printf("- **Initiatives**: %s\n", initiatives)
+			}
+			if project.Labels != nil && len(project.Labels.Nodes) > 0 {
+				labels := ""
+				for i, label := range project.Labels.Nodes {
+					if i > 0 {
+						labels += ", "
+					}
+					labels += label.Name
+				}
+				fmt.Printf("- **Labels**: %s\n", labels)
+			}
 			if project.Icon != nil && *project.Icon != "" {
 				fmt.Printf("- **Icon**: %s\n", *project.Icon)
 			}
@@ -500,6 +534,10 @@ var projectGetCmd = &cobra.Command{
 			}
 			fmt.Printf("\n%s %s\n", color.New(color.Bold).Sprint("State:"), stateColor.Sprint(project.State))
 
+			if project.Priority > 0 {
+				fmt.Printf("%s %d\n", color.New(color.Bold).Sprint("Priority:"), project.Priority)
+			}
+
 			progressColor := color.New(color.FgRed)
 			if project.Progress >= 0.75 {
 				progressColor = color.New(color.FgGreen)
@@ -507,6 +545,28 @@ var projectGetCmd = &cobra.Command{
 				progressColor = color.New(color.FgYellow)
 			}
 			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Progress:"), progressColor.Sprintf("%.0f%%", project.Progress*100))
+
+			if project.Initiatives != nil && len(project.Initiatives.Nodes) > 0 {
+				initiatives := ""
+				for i, initiative := range project.Initiatives.Nodes {
+					if i > 0 {
+						initiatives += ", "
+					}
+					initiatives += initiative.Name
+				}
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Initiatives:"), initiatives)
+			}
+
+			if project.Labels != nil && len(project.Labels.Nodes) > 0 {
+				labels := ""
+				for i, label := range project.Labels.Nodes {
+					if i > 0 {
+						labels += ", "
+					}
+					labels += label.Name
+				}
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Labels:"), labels)
+			}
 
 			if project.StartDate != nil || project.TargetDate != nil {
 				fmt.Println()
@@ -821,12 +881,150 @@ Examples:
     },
 }
 
+var projectUpdateCmd = &cobra.Command{
+	Use:   "update PROJECT-UUID",
+	Short: "Update project fields",
+	Long: `Update one or more project fields. At least one field must be provided.
+
+The project UUID is required as the first argument. All field flags are optional, but at least one must be specified.
+
+Examples:
+  # Update single field
+  linctl project update abc-123 --name "New Project Name"
+  linctl project update abc-123 --state started
+  linctl project update abc-123 --priority 1
+
+  # Update multiple fields
+  linctl project update abc-123 --state started --priority 2
+  linctl project update abc-123 --description "Full description" --summary "Short summary"
+
+  # Update with labels
+  linctl project update abc-123 --label "urgent,backend"`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+		projectID := args[0]
+
+		// Validate project UUID provided
+		if projectID == "" {
+			output.Error("Project UUID is required", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Get auth header
+		authHeader, err := getAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := newAPIClient(authHeader)
+
+		// Build input map with only changed fields
+		input := make(map[string]interface{})
+
+		if cmd.Flags().Changed("name") {
+			name, _ := cmd.Flags().GetString("name")
+			input["name"] = name
+		}
+		if cmd.Flags().Changed("description") {
+			description, _ := cmd.Flags().GetString("description")
+			input["description"] = description
+		}
+		if cmd.Flags().Changed("summary") {
+			summary, _ := cmd.Flags().GetString("summary")
+			input["shortSummary"] = summary
+		}
+		if cmd.Flags().Changed("state") {
+			state, _ := cmd.Flags().GetString("state")
+			input["state"] = state
+		}
+		if cmd.Flags().Changed("priority") {
+			priority, _ := cmd.Flags().GetInt("priority")
+			input["priority"] = priority
+		}
+
+		// Validate at least one field provided
+		if len(input) == 0 {
+			output.Error("At least one field to update is required", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Validate state if provided
+		if state, ok := input["state"].(string); ok {
+			allowedStates := []string{"planned", "started", "paused", "completed", "canceled"}
+			valid := false
+			for _, s := range allowedStates {
+				if state == s {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				output.Error(fmt.Sprintf("Invalid state. Must be one of: %s", strings.Join(allowedStates, ", ")), plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		// Validate priority if provided
+		if priority, ok := input["priority"].(int); ok {
+			if priority < 0 || priority > 4 {
+				output.Error("Priority must be between 0 and 4", plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		// Update project
+		project, err := client.UpdateProject(context.Background(), projectID, input)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to update project: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Handle output
+		if jsonOut {
+			output.JSON(project)
+		} else if plaintext {
+			fmt.Printf("# Project Updated\n\n")
+			fmt.Printf("- **Name**: %s\n", project.Name)
+			fmt.Printf("- **ID**: %s\n", project.ID)
+			if project.State != "" {
+				fmt.Printf("- **State**: %s\n", project.State)
+			}
+			if project.Priority > 0 {
+				fmt.Printf("- **Priority**: %d\n", project.Priority)
+			}
+			if project.Description != "" {
+				fmt.Printf("- **Description**: %s\n", project.Description)
+			}
+			fmt.Printf("- **URL**: %s\n", constructProjectURL(project.ID, project.URL))
+		} else {
+			fmt.Println()
+			fmt.Printf("%s Project updated successfully\n", color.New(color.FgGreen).Sprint("✓"))
+			fmt.Println()
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Name:"), project.Name)
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("ID:"), project.ID)
+			if project.State != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("State:"), project.State)
+			}
+			if project.Priority > 0 {
+				fmt.Printf("%s %d\n", color.New(color.Bold).Sprint("Priority:"), project.Priority)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("URL:"), color.New(color.FgBlue, color.Underline).Sprint(constructProjectURL(project.ID, project.URL)))
+			fmt.Println()
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectArchiveCmd)
+	projectCmd.AddCommand(projectUpdateCmd)
 
 	// List command flags
 	projectListCmd.Flags().StringP("team", "t", "", "Filter by team key")
@@ -843,4 +1041,11 @@ func init() {
 	projectCreateCmd.Flags().String("state", "", "Project state (planned|started|paused|completed|canceled)")
 	projectCreateCmd.Flags().Int("priority", 0, "Priority (0-4: None, Urgent, High, Normal, Low)")
 	projectCreateCmd.Flags().String("target-date", "", "Target date (YYYY-MM-DD)")
+
+	// Update command flags
+	projectUpdateCmd.Flags().String("name", "", "Project name")
+	projectUpdateCmd.Flags().String("description", "", "Project description")
+	projectUpdateCmd.Flags().String("summary", "", "Project short summary")
+	projectUpdateCmd.Flags().String("state", "", "Project state (planned|started|paused|completed|canceled)")
+	projectUpdateCmd.Flags().Int("priority", 0, "Priority (0-4: None, Urgent, High, Normal, Low)")
 }

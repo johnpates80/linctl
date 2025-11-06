@@ -35,6 +35,20 @@ func (m *mockProjectClient) ArchiveProject(ctx context.Context, id string) (bool
     return true, nil
 }
 
+func (m *mockProjectClient) UpdateProject(ctx context.Context, id string, input map[string]interface{}) (*api.Project, error) {
+    project := &api.Project{ID: id, Name: "Alpha"}
+    if name, ok := input["name"].(string); ok {
+        project.Name = name
+    }
+    if state, ok := input["state"].(string); ok {
+        project.State = state
+    }
+    if priority, ok := input["priority"].(int); ok {
+        project.Priority = priority
+    }
+    return project, nil
+}
+
 func (m *mockProjectClient) GetProject(ctx context.Context, id string) (*api.Project, error) {
     return &api.Project{ID: id, Name: "Alpha"}, nil
 }
