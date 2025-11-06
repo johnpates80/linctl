@@ -1,6 +1,6 @@
 # Story 1.1: Issue-Project Assignment
 
-**Status:** review
+**Status:** done
 
 ---
 

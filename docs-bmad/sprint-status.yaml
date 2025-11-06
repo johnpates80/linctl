@@ -36,7 +36,7 @@ story_location: "{project-root}/docs/stories"
 
 development_status:
   epic-1: contexted
-  1-1-issue-project-assignment: in-progress
+  1-1-issue-project-assignment: done
   1-2-project-creation-archival: ready-for-dev
   1-3-project-updates-enhanced-display: ready-for-dev
   epic-1-retrospective: optional
