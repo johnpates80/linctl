@@ -32,6 +32,13 @@ func isProjectNotFoundErr(err error) bool {
 	return strings.Contains(e, "project") || strings.Contains(e, "projectid")
 }
 
+func isIssueNotFoundErr(err error) bool {
+    if err == nil { return false }
+    e := strings.ToLower(err.Error())
+    if !strings.Contains(e, "not found") { return false }
+    return strings.Contains(e, "issue") || strings.Contains(e, "parent") || strings.Contains(e, "id")
+}
+
 // buildProjectInput normalizes a --project flag value to a GraphQL input value.
 // Returns (value, ok, err):
 // - ok=false means no input should be set (flag empty / not provided)
@@ -1272,8 +1279,8 @@ var issueCreateCmd = &cobra.Command{
 			input["assigneeId"] = viewer.ID
 		}
 
-		// Handle project assignment
-		if cmd.Flags().Changed("project") {
+        // Handle project assignment
+        if cmd.Flags().Changed("project") {
 			projectID, _ := cmd.Flags().GetString("project")
 			if val, ok, err := buildProjectInput(projectID); err != nil {
 				output.Error(err.Error(), plaintext, jsonOut)
@@ -1284,10 +1291,25 @@ var issueCreateCmd = &cobra.Command{
 					input["projectId"] = val
 				}
 			}
-		}
+        }
 
-		// Handle label assignment on create (optional)
-		if cmd.Flags().Changed("label") {
+        // Handle parent assignment (sub-issue)
+        if cmd.Flags().Changed("parent") {
+            parentIdent, _ := cmd.Flags().GetString("parent")
+            parentIdent = strings.TrimSpace(parentIdent)
+            if parentIdent != "" && parentIdent != "unassigned" {
+                // Resolve to node ID
+                p, err := client.GetIssue(context.Background(), parentIdent)
+                if err != nil {
+                    output.Error(fmt.Sprintf("Parent issue '%s' not found", parentIdent), plaintext, jsonOut)
+                    os.Exit(1)
+                }
+                input["parentId"] = p.ID
+            }
+        }
+
+        // Handle label assignment on create (optional)
+        if cmd.Flags().Changed("label") {
 			labelsCSV, _ := cmd.Flags().GetString("label")
 			// Empty string means clear (no labels) — equivalent to not setting
 			if strings.TrimSpace(labelsCSV) != "" {
@@ -1365,11 +1387,11 @@ Examples:
 
 		client := api.NewClient(authHeader)
 
-		// Build update input
-		input := make(map[string]interface{})
+        // Build update input
+        input := make(map[string]interface{})
 
-		// Handle title update
-		if cmd.Flags().Changed("title") {
+        // Handle title update
+        if cmd.Flags().Changed("title") {
 			title, _ := cmd.Flags().GetString("title")
 			input["title"] = title
 		}
@@ -1612,6 +1634,7 @@ func init() {
 	issueCreateCmd.Flags().BoolP("assign-me", "m", false, "Assign to yourself")
 	issueCreateCmd.Flags().String("project", "", "Project ID to assign issue to")
 	issueCreateCmd.Flags().String("label", "", "Comma-separated labels to set during creation (e.g., 'bug,backend')")
+	issueCreateCmd.Flags().String("parent", "", "Parent issue identifier (e.g., 'RAE-123') to create a sub-issue")
 	_ = issueCreateCmd.MarkFlagRequired("title")
 	_ = issueCreateCmd.MarkFlagRequired("team")
 
@@ -1626,4 +1649,5 @@ func init() {
 	issueUpdateCmd.Flags().String("label", "", "Set labels exactly (comma-separated). Empty string clears all labels. Takes precedence over add/remove.")
 	issueUpdateCmd.Flags().String("add-label", "", "Add labels (comma-separated). Ignored if --label is provided.")
 	issueUpdateCmd.Flags().String("remove-label", "", "Remove labels (comma-separated). Ignored if --label is provided.")
+	issueUpdateCmd.Flags().String("parent", "", "Parent issue identifier to set (or 'unassigned' to remove parent)")
 }

@@ -141,6 +141,8 @@ linctl issue get LIN-123
 linctl issue create --title "Bug fix" --team ENG
 # Create with labels
 linctl issue create --title "Feature" --team ENG --label "backend,api"
+# Create as sub-issue under RAE-123
+linctl issue create --title "Implement worker" --team ENG --parent RAE-123
 
 # Assign issue to yourself
 linctl issue assign LIN-123
@@ -301,6 +303,7 @@ linctl issue new [flags]      # Alias
   -m, --assign-me          Assign to yourself
   --project string         Project UUID (or 'unassigned')
   --label string           Comma-separated label names or IDs (e.g., "bug,urgent")
+  --parent string          Parent issue identifier (e.g., 'RAE-123')
 
 # Assign issue to yourself
 linctl issue assign <issue-id>
@@ -319,6 +322,7 @@ linctl issue edit <issue-id> [flags]    # Alias
   --label string           Set labels (comma-separated names/IDs, or "" to clear all)
   --add-label string       Add labels incrementally (comma-separated)
   --remove-label string    Remove labels incrementally (comma-separated)
+  --parent string          Set parent issue by identifier (or 'unassigned' to remove)
 
 # Label Precedence: If --label is provided, --add-label and --remove-label are ignored
 
