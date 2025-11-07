@@ -213,7 +213,7 @@ var issueListCmd = &cobra.Command{
     client := api.NewClient(authHeader)
 
     // Build filter from flags (includes optional label/project, label operators)
-    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled := buildIssueFilter(cmd, client)
+    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled, parentID, wantHasParent, wantNoParent := buildIssueFilter(cmd, client)
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit == 0 {
@@ -246,6 +246,7 @@ var issueListCmd = &cobra.Command{
 
     // Apply post-filters for labels (AND/OR/NOT/unlabeled)
     issues = filterIssuesAdvanced(issues, requiredAllIDs, anyIDs, notIDs, wantUnlabeled)
+    issues = filterIssuesByParent(issues, parentID, wantHasParent, wantNoParent)
 
     renderIssueCollection(issues, plaintext, jsonOut, "No issues found", "issues", "# Issues")
 },
@@ -427,7 +428,7 @@ Examples:
 
     client := api.NewClient(authHeader)
 
-    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled := buildIssueFilter(cmd, client)
+    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled, parentID, wantHasParent, wantNoParent := buildIssueFilter(cmd, client)
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit == 0 {
@@ -460,6 +461,7 @@ Examples:
 
     // Apply post-filters for labels (AND/OR/NOT/unlabeled)
     issues = filterIssuesAdvanced(issues, requiredAllIDs, anyIDs, notIDs, wantUnlabeled)
+    issues = filterIssuesByParent(issues, parentID, wantHasParent, wantNoParent)
 
     emptyMsg := fmt.Sprintf("No matches found for %q", query)
     renderIssueCollection(issues, plaintext, jsonOut, emptyMsg, "matches", "# Search Results")
@@ -911,13 +913,17 @@ var issueGetCmd = &cobra.Command{
 	},
 }
 
-func buildIssueFilter(cmd *cobra.Command, client *api.Client) (map[string]interface{}, []string, []string, []string, bool) {
+func buildIssueFilter(cmd *cobra.Command, client *api.Client) (map[string]interface{}, []string, []string, []string, bool, string, bool, bool) {
     filter := make(map[string]interface{})
     // Label operator buckets
     requiredLabelIDs := []string{} // --label (AND semantics)
     anyLabelIDs := []string{}      // --label-any (OR semantics)
     notLabelIDs := []string{}      // --label-not (exclude)
     unlabeledOnly := false         // --unlabeled
+    // Parent filters
+    parentNodeID := ""            // --parent <identifier>
+    hasParent := false             // --has-parent
+    noParent := false              // --no-parent
 
 	if assignee, _ := cmd.Flags().GetString("assignee"); assignee != "" {
 		if assignee == "me" {
@@ -1064,8 +1070,46 @@ func buildIssueFilter(cmd *cobra.Command, client *api.Client) (map[string]interf
     if len(labelsFilter) > 0 {
         filter["labels"] = labelsFilter
     }
+    // Parent filters (mutually exclusive logic)
+    if cmd.Flags().Changed("has-parent") && cmd.Flags().Changed("no-parent") {
+        plaintext := viper.GetBool("plaintext")
+        jsonOut := viper.GetBool("json")
+        output.Error("Cannot combine --has-parent and --no-parent", plaintext, jsonOut)
+        os.Exit(1)
+    }
+    if cmd.Flags().Changed("parent") && (cmd.Flags().Changed("has-parent") || cmd.Flags().Changed("no-parent")) {
+        plaintext := viper.GetBool("plaintext")
+        jsonOut := viper.GetBool("json")
+        output.Error("Cannot combine --parent with --has-parent/--no-parent", plaintext, jsonOut)
+        os.Exit(1)
+    }
+    if cmd.Flags().Changed("parent") {
+        ident, _ := cmd.Flags().GetString("parent")
+        ident = strings.TrimSpace(ident)
+        if ident != "" {
+            // Resolve identifier to node ID
+            p, err := client.GetIssue(context.Background(), ident)
+            if err != nil {
+                plaintext := viper.GetBool("plaintext")
+                jsonOut := viper.GetBool("json")
+                output.Error(fmt.Sprintf("Parent issue '%s' not found", ident), plaintext, jsonOut)
+                os.Exit(1)
+            }
+            parentNodeID = p.ID
+            // Best-effort server filter on parent.id
+            filter["parent"] = map[string]interface{}{
+                "id": map[string]interface{}{"eq": parentNodeID},
+            }
+        }
+    }
+    if cmd.Flags().Changed("has-parent") {
+        hasParent, _ = cmd.Flags().GetBool("has-parent")
+    }
+    if cmd.Flags().Changed("no-parent") {
+        noParent, _ = cmd.Flags().GetBool("no-parent")
+    }
 
-    return filter, requiredLabelIDs, anyLabelIDs, notLabelIDs, unlabeledOnly
+    return filter, requiredLabelIDs, anyLabelIDs, notLabelIDs, unlabeledOnly, parentNodeID, hasParent, noParent
 }
 
 // filterIssuesByLabels enforces AND semantics for label IDs on a fetched collection.
@@ -1132,6 +1176,39 @@ func filterIssuesAdvanced(issues *api.Issues, requireAll, any, not []string, unl
         return true
     }
 
+    out := make([]api.Issue, 0, len(issues.Nodes))
+    for _, is := range issues.Nodes {
+        if keep(is) {
+            out = append(out, is)
+        }
+    }
+    filtered := *issues
+    filtered.Nodes = out
+    return &filtered
+}
+
+// filterIssuesByParent applies parent-based filters client-side.
+func filterIssuesByParent(issues *api.Issues, parentID string, wantHas, wantNo bool) *api.Issues {
+    if issues == nil {
+        return issues
+    }
+    // No parent filters: return as-is
+    if parentID == "" && !wantHas && !wantNo {
+        return issues
+    }
+    keep := func(is api.Issue) bool {
+        has := is.Parent != nil && is.Parent.ID != ""
+        if parentID != "" {
+            return has && is.Parent.ID == parentID
+        }
+        if wantHas {
+            return has
+        }
+        if wantNo {
+            return !has
+        }
+        return true
+    }
     out := make([]api.Issue, 0, len(issues.Nodes))
     for _, is := range issues.Nodes {
         if keep(is) {
@@ -1609,6 +1686,9 @@ func init() {
     issueListCmd.Flags().String("label-any", "", "Match any of these labels (comma-separated names). OR semantics.")
     issueListCmd.Flags().String("label-not", "", "Exclude issues that have any of these labels (comma-separated names).")
     issueListCmd.Flags().Bool("unlabeled", false, "Only issues with no labels (cannot be combined with label filters)")
+    issueListCmd.Flags().String("parent", "", "Filter by parent issue identifier (e.g., 'RAE-123')")
+    issueListCmd.Flags().Bool("has-parent", false, "Only sub-issues (issues that have a parent)")
+    issueListCmd.Flags().Bool("no-parent", false, "Only top-level issues (no parent)")
 
 	// Issue search flags
 	issueSearchCmd.Flags().StringP("assignee", "a", "", "Filter by assignee (email or 'me')")
@@ -1625,6 +1705,9 @@ func init() {
     issueSearchCmd.Flags().String("label-any", "", "Match any of these labels (comma-separated names). OR semantics.")
     issueSearchCmd.Flags().String("label-not", "", "Exclude issues that have any of these labels (comma-separated names).")
     issueSearchCmd.Flags().Bool("unlabeled", false, "Only issues with no labels (cannot be combined with label filters)")
+    issueSearchCmd.Flags().String("parent", "", "Filter by parent issue identifier (e.g., 'RAE-123')")
+    issueSearchCmd.Flags().Bool("has-parent", false, "Only sub-issues (issues that have a parent)")
+    issueSearchCmd.Flags().Bool("no-parent", false, "Only top-level issues (no parent)")
 
 	// Issue create flags
 	issueCreateCmd.Flags().StringP("title", "", "", "Issue title (required)")

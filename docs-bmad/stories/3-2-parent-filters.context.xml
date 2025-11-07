@@ -1,0 +1,20 @@
+<story-context id="bmad/bmm/workflows/4-implementation/story-context/template" v="1.0">
+  <metadata>
+    <epicId>3</epicId>
+    <storyId>3.2</storyId>
+    <title>Parent Filters for Issue List/Search</title>
+    <status>in-progress</status>
+    <generatedAt>2025-11-07</generatedAt>
+    <generator>BMAD Story Context (manual scaffold)</generator>
+  </metadata>
+  <artifacts>
+    <code file="cmd/issue.go" linesHint="buildIssueFilter, flag wiring, post-filters" />
+    <code file="pkg/api/queries.go" linesHint="GetIssues/IssueSearch parent fields" />
+    <doc file="docs-bmad/stories/story-parent-filters-3-2.md" />
+  </artifacts>
+  <acceptanceCriteria>
+    <item>--parent filters by specific parent</item>
+    <item>--has-parent and --no-parent work and are exclusive</item>
+    <item>Composes with existing filters and search</item>
+  </acceptanceCriteria>
+</story-context>

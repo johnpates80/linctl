@@ -125,6 +125,12 @@ linctl issue list --label-not "wontfix,duplicate"       # Exclude these labels
 linctl issue list --unlabeled                            # Only issues with no labels
 linctl issue search "auth" --label-any "bug,urgent"
 
+# Parent filters
+linctl issue list --parent RAE-123         # Only sub-issues of RAE-123
+linctl issue list --has-parent             # Only sub-issues (any parent)
+linctl issue list --no-parent              # Only top-level issues (no parent)
+linctl issue search "payment" --parent RAE-123
+
 # List recent issues (last 2 weeks instead of default 6 months)
 linctl issue list --newer-than 2_weeks_ago
 
@@ -285,6 +291,9 @@ linctl issue ls [flags]     # Short alias
       --label-any string   Match any labels (comma-separated). OR semantics.
       --label-not string   Exclude issues that have any of these labels.
       --unlabeled          Only issues with no labels (cannot combine with other label filters)
+      --parent string      Filter by parent issue identifier (e.g., 'RAE-123')
+      --has-parent         Only sub-issues (issues with a parent)
+      --no-parent          Only top-level issues (no parent)
 
 # Note: The same flags apply to `issue search` in addition to `--include-archived`.
 
