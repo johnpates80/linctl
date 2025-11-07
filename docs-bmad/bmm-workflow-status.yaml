@@ -14,12 +14,12 @@
 #   - {file-path}: File created/found (e.g., "docs/product-brief.md")
 #   - skipped: Optional/conditional workflow that was skipped
 
-generated: "2025-11-05 10:01:46 +08"
+generated: "2025-11-07 10:01:46 +08"
 project: "linctl"
 project_type: "software"
 selected_track: "quick-flow"
 field_type: "brownfield"
-workflow_path: "bmad/bmm/workflows/workflow-status/paths/quick-flow-brownfield.yaml"
+workflow_path: "bmad/bmm/workflows/workflow-status/workflow.yaml"
 
 workflow_status:
   # Prerequisite: Documentation
@@ -34,50 +34,42 @@ workflow_status:
   # Phase 2: Implementation
   sprint-planning: required
 
-# Epic and Stories (from tech-spec workflow)
-epic_1:
-  slug: "project-management"
-  title: "Comprehensive Project Management"
-  total_stories: 3
-  total_points: 10
-  estimated_timeline: "1-2 weeks (1 sprint)"
-  linear_id: "642b2e48-c781-44a7-bf98-797013b938e2"
-  linear_identifier: "RAE-333"
-  linear_url: "https://linear.app/raegis/issue/RAE-333"
+# Completed Epic Archive
+completed_epics:
+  - slug: "project-management"
+    title: "Comprehensive Project Management"
+    completion_date: "2025-11-07"
+    total_stories: 3
+    total_points: 10
+    linear_id: "642b2e48-c781-44a7-bf98-797013b938e2"
+    linear_identifier: "RAE-333"
+    linear_url: "https://linear.app/raegis/issue/RAE-333"
+    notes: "All project management features completed - issue assignment, project creation/archival, and project updates"
 
-stories:
-  - id: "story-project-management-1"
-    title: "Issue-Project Assignment"
-    status: "draft"
-    points: 2
-    time: "1.5h"
-    file: "docs-bmad/stories/story-project-management-1.md"
-    dependencies: []
-    linear_id: "b9df6969-efb3-4021-b5fa-a2918c8332fa"
-    linear_identifier: "RAE-334"
-    linear_url: "https://linear.app/raegis/issue/RAE-334"
+# Current Epics and Stories (clean slate)
+current_epics:
+  - slug: "issue-filters"
+    title: "Issue Filtering & Search Enhancements"
+    status: "backlog"
+current_stories:
+  - id: "2-1"
+    slug: "issue-list-filters"
+    title: "Issue List Filters by Project and Labels"
+    status: "review"
+    path: "docs-bmad/stories/story-issue-filters-1.md"
+  - id: "2-2"
+    slug: "issue-list-labels"
+    title: "Show Labels in Issue List Output"
+    status: "review"
+    path: "docs-bmad/stories/story-issue-list-labels-2.md"
+  - id: "2-3"
+    slug: "label-operators"
+    title: "Advanced Label Operators for Issue List/Search"
+    status: "review"
+    path: "docs-bmad/stories/story-issue-label-operators-3.md"
 
-  - id: "story-project-management-2"
-    title: "Project Creation & Archival"
-    status: "draft"
-    points: 3
-    time: "3.5h"
-    file: "docs-bmad/stories/story-project-management-2.md"
-    dependencies: ["story-project-management-1"]
-    linear_id: "83ddc9b0-c2f7-4459-891d-a2c9058b29c1"
-    linear_identifier: "RAE-335"
-    linear_url: "https://linear.app/raegis/issue/RAE-335"
-
-  - id: "story-project-management-3"
-    title: "Project Updates & Enhanced Display"
-    status: "draft"
-    points: 5
-    time: "4h"
-    file: "docs-bmad/stories/story-project-management-3.md"
-    dependencies: ["story-project-management-2"]
-    linear_id: "5cb97ff2-d548-43b2-b348-3d591ba46f8c"
-    linear_identifier: "RAE-336"
-    linear_url: "https://linear.app/raegis/issue/RAE-336"
+# Next Steps: Ready for new epic and story creation
+next_milestone: "Define new epic for next development phase"
 
 # checkpoints (from workflow-init):
 # project_name: linctl

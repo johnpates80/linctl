@@ -114,6 +114,17 @@ linctl issue list --sort updated
 linctl issue search "login bug" --team ENG
 linctl issue search "customer:" --include-completed --include-archived
 
+# Filter by project and labels (AND semantics for multiple labels)
+linctl issue list --project PROJECT-UUID
+linctl issue list --label "bug,backend"
+linctl issue search "epic" --project PROJECT-UUID --label "bug"
+
+# Advanced label operators
+linctl issue list --label-any "bug,backend"             # OR semantics
+linctl issue list --label-not "wontfix,duplicate"       # Exclude these labels
+linctl issue list --unlabeled                            # Only issues with no labels
+linctl issue search "auth" --label-any "bug,urgent"
+
 # List recent issues (last 2 weeks instead of default 6 months)
 linctl issue list --newer-than 2_weeks_ago
 
@@ -267,6 +278,13 @@ linctl issue ls [flags]     # Short alias
   -l, --limit int          Maximum results (default 50)
   -o, --sort string        Sort order: linear (default), created, updated
   -n, --newer-than string  Show items created after this time (default: 6_months_ago, use 'all_time' for no filter)
+      --project string     Filter by project ID (UUID)
+      --label string       Filter by labels (comma-separated names). AND semantics when multiple labels provided.
+      --label-any string   Match any labels (comma-separated). OR semantics.
+      --label-not string   Exclude issues that have any of these labels.
+      --unlabeled          Only issues with no labels (cannot combine with other label filters)
+
+# Note: The same flags apply to `issue search` in addition to `--include-archived`.
 
 # Get issue details (shows parent and sub-issues)
 linctl issue get <issue-id>
@@ -443,9 +461,9 @@ linctl comment create LIN-456 --body "@john please review this PR"
 linctl issue list
 ```
 ```
-ID       Title                State        Assignee    Team  Priority
-LIN-123  Fix authentication   In Progress  john@co.com ENG   High
-LIN-124  Update documentation Done         jane@co.com DOC   Normal
+TITLE                  STATE         ASSIGNEE    TEAM  PROJECT                 LABELS         CREATED     URL
+Fix authentication     In Progress   John Doe    ENG   Backend Revamp          bug, backend   2025-07-12  https://linear.app/.../fix-authentication
+Update documentation   Done          Jane Smith  DOC   Docs Refresh            -              2025-07-11  https://linear.app/.../update-documentation
 ```
 
 ### Plaintext Format

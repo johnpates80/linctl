@@ -203,10 +203,10 @@ var issueListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		client := api.NewClient(authHeader)
+    client := api.NewClient(authHeader)
 
-		// Build filter from flags
-		filter := buildIssueFilter(cmd)
+    // Build filter from flags (includes optional label/project, label operators)
+    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled := buildIssueFilter(cmd, client)
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit == 0 {
@@ -231,14 +231,17 @@ var issueListCmd = &cobra.Command{
 			}
 		}
 
-		issues, err := client.GetIssues(context.Background(), filter, limit, "", orderBy)
-		if err != nil {
-			output.Error(fmt.Sprintf("Failed to fetch issues: %v", err), plaintext, jsonOut)
-			os.Exit(1)
-		}
+    issues, err := client.GetIssues(context.Background(), filter, limit, "", orderBy)
+    if err != nil {
+        output.Error(fmt.Sprintf("Failed to fetch issues: %v", err), plaintext, jsonOut)
+        os.Exit(1)
+    }
 
-		renderIssueCollection(issues, plaintext, jsonOut, "No issues found", "issues", "# Issues")
-	},
+    // Apply post-filters for labels (AND/OR/NOT/unlabeled)
+    issues = filterIssuesAdvanced(issues, requiredAllIDs, anyIDs, notIDs, wantUnlabeled)
+
+    renderIssueCollection(issues, plaintext, jsonOut, "No issues found", "issues", "# Issues")
+},
 }
 
 func renderIssueCollection(issues *api.Issues, plaintext, jsonOut bool, emptyMessage, summaryLabel, plaintextTitle string) {
@@ -252,37 +255,47 @@ func renderIssueCollection(issues *api.Issues, plaintext, jsonOut bool, emptyMes
 		return
 	}
 
-	if plaintext {
-		fmt.Println(plaintextTitle)
-		for _, issue := range issues.Nodes {
-			fmt.Printf("## %s\n", issue.Title)
-			fmt.Printf("- **ID**: %s\n", issue.Identifier)
-			if issue.State != nil {
-				fmt.Printf("- **State**: %s\n", issue.State.Name)
-			}
-			if issue.Assignee != nil {
-				fmt.Printf("- **Assignee**: %s\n", issue.Assignee.Name)
-			} else {
-				fmt.Printf("- **Assignee**: Unassigned\n")
-			}
-			if issue.Team != nil {
-				fmt.Printf("- **Team**: %s\n", issue.Team.Key)
-			}
-			if issue.Project != nil {
-				fmt.Printf("- **Project**: %s\n", issue.Project.Name)
-			}
-			fmt.Printf("- **Created**: %s\n", issue.CreatedAt.Format("2006-01-02"))
-			fmt.Printf("- **URL**: %s\n", issue.URL)
-			if issue.Description != "" {
-				fmt.Printf("- **Description**: %s\n", issue.Description)
-			}
-			fmt.Println()
-		}
-		fmt.Printf("\nTotal: %d %s\n", len(issues.Nodes), summaryLabel)
-		return
-	}
+    if plaintext {
+        fmt.Println(plaintextTitle)
+        for _, issue := range issues.Nodes {
+            fmt.Printf("## %s\n", issue.Title)
+            fmt.Printf("- **ID**: %s\n", issue.Identifier)
+            if issue.State != nil {
+                fmt.Printf("- **State**: %s\n", issue.State.Name)
+            }
+            if issue.Assignee != nil {
+                fmt.Printf("- **Assignee**: %s\n", issue.Assignee.Name)
+            } else {
+                fmt.Printf("- **Assignee**: Unassigned\n")
+            }
+            if issue.Team != nil {
+                fmt.Printf("- **Team**: %s\n", issue.Team.Key)
+            }
+            if issue.Project != nil {
+                fmt.Printf("- **Project**: %s\n", issue.Project.Name)
+            }
+            // Labels (show all names or None)
+            if issue.Labels != nil && len(issue.Labels.Nodes) > 0 {
+                names := make([]string, 0, len(issue.Labels.Nodes))
+                for _, l := range issue.Labels.Nodes {
+                    names = append(names, l.Name)
+                }
+                fmt.Printf("- **Labels**: %s\n", strings.Join(names, ", "))
+            } else {
+                fmt.Printf("- **Labels**: None\n")
+            }
+            fmt.Printf("- **Created**: %s\n", issue.CreatedAt.Format("2006-01-02"))
+            fmt.Printf("- **URL**: %s\n", issue.URL)
+            if issue.Description != "" {
+                fmt.Printf("- **Description**: %s\n", issue.Description)
+            }
+            fmt.Println()
+        }
+        fmt.Printf("\nTotal: %d %s\n", len(issues.Nodes), summaryLabel)
+        return
+    }
 
-	headers := []string{"Title", "State", "Assignee", "Team", "Project", "Created", "URL"}
+    headers := []string{"Title", "State", "Assignee", "Team", "Project", "Labels", "Created", "URL"}
 	rows := make([][]string, len(issues.Nodes))
 
 	for i, issue := range issues.Nodes {
@@ -296,15 +309,35 @@ func renderIssueCollection(issues *api.Issues, plaintext, jsonOut bool, emptyMes
 			team = issue.Team.Key
 		}
 
-		project := ""
-		if issue.Project != nil {
-			project = truncateString(issue.Project.Name, 25)
-		}
+        project := ""
+        if issue.Project != nil {
+            project = truncateString(issue.Project.Name, 25)
+        }
 
-		state := ""
-		if issue.State != nil {
-			state = issue.State.Name
-			var stateColor *color.Color
+        // Build labels string: up to 3 labels, comma-separated
+        labels := "-"
+        if issue.Labels != nil && len(issue.Labels.Nodes) > 0 {
+            count := len(issue.Labels.Nodes)
+            max := 3
+            if count < max {
+                max = count
+            }
+            names := make([]string, 0, max)
+            for i := 0; i < max; i++ {
+                names = append(names, issue.Labels.Nodes[i].Name)
+            }
+            labels = strings.Join(names, ", ")
+            if count > max {
+                // Indicate more labels exist; still truncate to fit table
+                labels = labels + fmt.Sprintf(" +%d", count-max)
+            }
+            labels = truncateString(labels, 25)
+        }
+
+        state := ""
+        if issue.State != nil {
+            state = issue.State.Name
+            var stateColor *color.Color
 			switch issue.State.Type {
 			case "triage":
 				stateColor = color.New(color.FgMagenta)
@@ -328,15 +361,16 @@ func renderIssueCollection(issues *api.Issues, plaintext, jsonOut bool, emptyMes
 			assignee = color.New(color.FgYellow).Sprint(assignee)
 		}
 
-		rows[i] = []string{
-			truncateString(issue.Title, 40),
-			state,
-			assignee,
-			team,
-			project,
-			issue.CreatedAt.Format("2006-01-02"),
-			issue.URL,
-		}
+        rows[i] = []string{
+            truncateString(issue.Title, 40),
+            state,
+            assignee,
+            team,
+            project,
+            labels,
+            issue.CreatedAt.Format("2006-01-02"),
+            issue.URL,
+        }
 	}
 
 	tableData := output.TableData{
@@ -384,9 +418,9 @@ Examples:
 			os.Exit(1)
 		}
 
-		client := api.NewClient(authHeader)
+    client := api.NewClient(authHeader)
 
-		filter := buildIssueFilter(cmd)
+    filter, requiredAllIDs, anyIDs, notIDs, wantUnlabeled := buildIssueFilter(cmd, client)
 
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit == 0 {
@@ -411,15 +445,18 @@ Examples:
 
 		includeArchived, _ := cmd.Flags().GetBool("include-archived")
 
-		issues, err := client.IssueSearch(context.Background(), query, filter, limit, "", orderBy, includeArchived)
-		if err != nil {
-			output.Error(fmt.Sprintf("Failed to search issues: %v", err), plaintext, jsonOut)
-			os.Exit(1)
-		}
+    issues, err := client.IssueSearch(context.Background(), query, filter, limit, "", orderBy, includeArchived)
+    if err != nil {
+        output.Error(fmt.Sprintf("Failed to search issues: %v", err), plaintext, jsonOut)
+        os.Exit(1)
+    }
 
-		emptyMsg := fmt.Sprintf("No matches found for %q", query)
-		renderIssueCollection(issues, plaintext, jsonOut, emptyMsg, "matches", "# Search Results")
-	},
+    // Apply post-filters for labels (AND/OR/NOT/unlabeled)
+    issues = filterIssuesAdvanced(issues, requiredAllIDs, anyIDs, notIDs, wantUnlabeled)
+
+    emptyMsg := fmt.Sprintf("No matches found for %q", query)
+    renderIssueCollection(issues, plaintext, jsonOut, emptyMsg, "matches", "# Search Results")
+},
 }
 
 var issueGetCmd = &cobra.Command{
@@ -867,8 +904,13 @@ var issueGetCmd = &cobra.Command{
 	},
 }
 
-func buildIssueFilter(cmd *cobra.Command) map[string]interface{} {
-	filter := make(map[string]interface{})
+func buildIssueFilter(cmd *cobra.Command, client *api.Client) (map[string]interface{}, []string, []string, []string, bool) {
+    filter := make(map[string]interface{})
+    // Label operator buckets
+    requiredLabelIDs := []string{} // --label (AND semantics)
+    anyLabelIDs := []string{}      // --label-any (OR semantics)
+    notLabelIDs := []string{}      // --label-not (exclude)
+    unlabeledOnly := false         // --unlabeled
 
 	if assignee, _ := cmd.Flags().GetString("assignee"); assignee != "" {
 		if assignee == "me" {
@@ -913,11 +955,185 @@ func buildIssueFilter(cmd *cobra.Command) map[string]interface{} {
 		output.Error(fmt.Sprintf("Invalid newer-than value: %v", err), plaintext, jsonOut)
 		os.Exit(1)
 	}
-	if createdAt != "" {
-		filter["createdAt"] = map[string]interface{}{"gte": createdAt}
-	}
+    if createdAt != "" {
+        filter["createdAt"] = map[string]interface{}{"gte": createdAt}
+    }
 
-	return filter
+    // Optional: project filter (by ID)
+    if cmd.Flags().Changed("project") {
+        proj, _ := cmd.Flags().GetString("project")
+        proj = strings.TrimSpace(proj)
+        if proj != "" {
+            if !isValidUUID(proj) {
+                plaintext := viper.GetBool("plaintext")
+                jsonOut := viper.GetBool("json")
+                output.Error(fmt.Sprintf("Invalid project ID format: %s", proj), plaintext, jsonOut)
+                os.Exit(1)
+            }
+            // Prefer nested project.id equality for filtering
+            filter["project"] = map[string]interface{}{
+                "id": map[string]interface{}{"eq": proj},
+            }
+        }
+    }
+
+    // Optional: label filters
+    labelsFilter := map[string]interface{}{}
+
+    // Primary AND filter (--label). If present, it takes precedence over --label-any/--label-not/--unlabeled.
+    if cmd.Flags().Changed("label") {
+        labelsCSV, _ := cmd.Flags().GetString("label")
+        if strings.TrimSpace(labelsCSV) != "" {
+            ids, err := lookupIssueLabelIDsByNames(context.Background(), client, labelsCSV)
+            if err != nil {
+                plaintext := viper.GetBool("plaintext")
+                jsonOut := viper.GetBool("json")
+                output.Error(err.Error(), plaintext, jsonOut)
+                os.Exit(1)
+            }
+            requiredLabelIDs = ids
+            labelsFilter["some"] = map[string]interface{}{
+                "id": map[string]interface{}{"in": ids},
+            }
+            // If other label flags are also set, warn (non-JSON) they are ignored
+            if (cmd.Flags().Changed("label-any") || cmd.Flags().Changed("label-not") || cmd.Flags().Changed("unlabeled")) && !viper.GetBool("json") {
+                fmt.Println("Warning: --label specified; ignoring --label-any/--label-not/--unlabeled")
+            }
+        } else {
+            // Empty string with --label for list/search doesn't make sense; ignore silently
+        }
+    } else {
+        // OR semantics (--label-any)
+        if cmd.Flags().Changed("label-any") {
+            csv, _ := cmd.Flags().GetString("label-any")
+            if strings.TrimSpace(csv) != "" {
+                ids, err := lookupIssueLabelIDsByNames(context.Background(), client, csv)
+                if err != nil {
+                    plaintext := viper.GetBool("plaintext")
+                    jsonOut := viper.GetBool("json")
+                    output.Error(err.Error(), plaintext, jsonOut)
+                    os.Exit(1)
+                }
+                anyLabelIDs = ids
+                labelsFilter["some"] = map[string]interface{}{
+                    "id": map[string]interface{}{"in": ids},
+                }
+            }
+        }
+        // NOT semantics (--label-not)
+        if cmd.Flags().Changed("label-not") {
+            csv, _ := cmd.Flags().GetString("label-not")
+            if strings.TrimSpace(csv) != "" {
+                ids, err := lookupIssueLabelIDsByNames(context.Background(), client, csv)
+                if err != nil {
+                    plaintext := viper.GetBool("plaintext")
+                    jsonOut := viper.GetBool("json")
+                    output.Error(err.Error(), plaintext, jsonOut)
+                    os.Exit(1)
+                }
+                notLabelIDs = ids
+                // Merge with existing labelsFilter if present
+                labelsFilter["none"] = map[string]interface{}{
+                    "id": map[string]interface{}{"in": ids},
+                }
+            }
+        }
+        // Unlabeled only (--unlabeled). Apply client-side only to avoid API quirks.
+        if cmd.Flags().Changed("unlabeled") {
+            unlabeledOnly, _ = cmd.Flags().GetBool("unlabeled")
+            if unlabeledOnly {
+                // If combined with 'any' or 'not', warn (non-JSON) and ignore others
+                if (len(anyLabelIDs) > 0 || len(notLabelIDs) > 0) && !viper.GetBool("json") {
+                    fmt.Println("Warning: --unlabeled specified; ignoring --label-any/--label-not")
+                }
+                // Clear server-side label filter to avoid conflicts
+                labelsFilter = map[string]interface{}{}
+                anyLabelIDs = nil
+                notLabelIDs = nil
+            }
+        }
+    }
+
+    if len(labelsFilter) > 0 {
+        filter["labels"] = labelsFilter
+    }
+
+    return filter, requiredLabelIDs, anyLabelIDs, notLabelIDs, unlabeledOnly
+}
+
+// filterIssuesByLabels enforces AND semantics for label IDs on a fetched collection.
+func filterIssuesAdvanced(issues *api.Issues, requireAll, any, not []string, unlabeled bool) *api.Issues {
+    if issues == nil {
+        return issues
+    }
+    // Build lookup sets
+    toSet := func(arr []string) map[string]struct{} {
+        if len(arr) == 0 {
+            return nil
+        }
+        m := make(map[string]struct{}, len(arr))
+        for _, v := range arr {
+            m[v] = struct{}{}
+        }
+        return m
+    }
+    req := toSet(requireAll)
+    anySet := toSet(any)
+    notSet := toSet(not)
+
+    keep := func(issue api.Issue) bool {
+        // Unlabeled only
+        if unlabeled {
+            return issue.Labels == nil || len(issue.Labels.Nodes) == 0
+        }
+        // Build label set
+        have := make(map[string]struct{})
+        if issue.Labels != nil {
+            for _, l := range issue.Labels.Nodes {
+                have[l.ID] = struct{}{}
+            }
+        }
+        // Require ALL
+        if req != nil {
+            for id := range req {
+                if _, ok := have[id]; !ok {
+                    return false
+                }
+            }
+        }
+        // Require ANY
+        if anySet != nil {
+            anyOK := false
+            for id := range anySet {
+                if _, ok := have[id]; ok {
+                    anyOK = true
+                    break
+                }
+            }
+            if !anyOK {
+                return false
+            }
+        }
+        // Exclude NOT
+        if notSet != nil {
+            for id := range notSet {
+                if _, ok := have[id]; ok {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    out := make([]api.Issue, 0, len(issues.Nodes))
+    for _, is := range issues.Nodes {
+        if keep(is) {
+            out = append(out, is)
+        }
+    }
+    filtered := *issues
+    filtered.Nodes = out
+    return &filtered
 }
 
 func priorityToString(priority int) string {
@@ -1366,6 +1582,11 @@ func init() {
 	issueListCmd.Flags().BoolP("include-completed", "c", false, "Include completed and canceled issues")
 	issueListCmd.Flags().StringP("sort", "o", "linear", "Sort order: linear (default), created, updated")
 	issueListCmd.Flags().StringP("newer-than", "n", "", "Show issues created after this time (default: 6_months_ago, use 'all_time' for no filter)")
+    issueListCmd.Flags().String("project", "", "Filter by project ID (UUID)")
+    issueListCmd.Flags().String("label", "", "Filter by labels (comma-separated names). AND semantics for multiple labels.")
+    issueListCmd.Flags().String("label-any", "", "Match any of these labels (comma-separated names). OR semantics.")
+    issueListCmd.Flags().String("label-not", "", "Exclude issues that have any of these labels (comma-separated names).")
+    issueListCmd.Flags().Bool("unlabeled", false, "Only issues with no labels (cannot be combined with label filters)")
 
 	// Issue search flags
 	issueSearchCmd.Flags().StringP("assignee", "a", "", "Filter by assignee (email or 'me')")
@@ -1377,6 +1598,11 @@ func init() {
 	issueSearchCmd.Flags().Bool("include-archived", false, "Include archived issues in results")
 	issueSearchCmd.Flags().StringP("sort", "o", "linear", "Sort order: linear (default), created, updated")
 	issueSearchCmd.Flags().StringP("newer-than", "n", "", "Show issues created after this time (default: 6_months_ago, use 'all_time' for no filter)")
+    issueSearchCmd.Flags().String("project", "", "Filter by project ID (UUID)")
+    issueSearchCmd.Flags().String("label", "", "Filter by labels (comma-separated names). AND semantics for multiple labels.")
+    issueSearchCmd.Flags().String("label-any", "", "Match any of these labels (comma-separated names). OR semantics.")
+    issueSearchCmd.Flags().String("label-not", "", "Exclude issues that have any of these labels (comma-separated names).")
+    issueSearchCmd.Flags().Bool("unlabeled", false, "Only issues with no labels (cannot be combined with label filters)")
 
 	// Issue create flags
 	issueCreateCmd.Flags().StringP("title", "", "", "Issue title (required)")
