@@ -1626,7 +1626,7 @@ Examples:
 						output.Error(err.Error(), plaintext, jsonOut)
 						os.Exit(1)
 					}
-					input["addLabelIds"] = ids
+                    input["addedLabelIds"] = ids
 				}
 			}
 			if removeSet {
@@ -1637,7 +1637,7 @@ Examples:
 						output.Error(err.Error(), plaintext, jsonOut)
 						os.Exit(1)
 					}
-					input["removeLabelIds"] = ids
+                    input["removedLabelIds"] = ids
 				}
 			}
 		}
