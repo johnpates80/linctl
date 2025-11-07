@@ -127,6 +127,8 @@ linctl issue get LIN-123
 
 # Create a new issue
 linctl issue create --title "Bug fix" --team ENG
+# Create with labels
+linctl issue create --title "Feature" --team ENG --label "backend,api"
 
 # Assign issue to yourself
 linctl issue assign LIN-123
@@ -144,6 +146,13 @@ linctl issue update LIN-123 --due-date ""  # Remove due date
 
 # Update multiple fields at once
 linctl issue update LIN-123 --title "Critical Bug" --assignee me --priority 1
+
+# Label management
+linctl issue update LIN-123 --label "bug,urgent"           # Set labels exactly
+linctl issue update LIN-123 --label ""                      # Clear all labels
+linctl issue update LIN-123 --add-label "backend"           # Incremental add
+linctl issue update LIN-123 --remove-label "frontend"       # Incremental remove
+# Precedence: if --label is provided, add/remove are ignored
 ```
 
 ### 3. Project Management

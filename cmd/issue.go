@@ -1,11 +1,12 @@
 package cmd
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "strings"
-    "regexp"
+	"context"
+	"fmt"
+	"os"
+	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/dorkitude/linctl/pkg/api"
 	"github.com/dorkitude/linctl/pkg/auth"
@@ -21,10 +22,14 @@ var uuidRegexp = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{
 func isValidUUID(s string) bool { return uuidRegexp.MatchString(s) }
 
 func isProjectNotFoundErr(err error) bool {
-    if err == nil { return false }
-    e := strings.ToLower(err.Error())
-    if !strings.Contains(e, "not found") { return false }
-    return strings.Contains(e, "project") || strings.Contains(e, "projectid")
+	if err == nil {
+		return false
+	}
+	e := strings.ToLower(err.Error())
+	if !strings.Contains(e, "not found") {
+		return false
+	}
+	return strings.Contains(e, "project") || strings.Contains(e, "projectid")
 }
 
 // buildProjectInput normalizes a --project flag value to a GraphQL input value.
@@ -33,17 +38,138 @@ func isProjectNotFoundErr(err error) bool {
 // - value=nil with ok=true means explicitly unset (unassigned)
 // - value=string (uuid) with ok=true means assign to that project
 func buildProjectInput(projectFlag string) (interface{}, bool, error) {
-    switch strings.TrimSpace(projectFlag) {
-    case "":
-        return nil, false, nil
-    case "unassigned":
-        return nil, true, nil
-    default:
-        if !isValidUUID(projectFlag) {
-            return nil, false, fmt.Errorf("Invalid project ID format: %s", projectFlag)
-        }
-        return projectFlag, true, nil
-    }
+	switch strings.TrimSpace(projectFlag) {
+	case "":
+		return nil, false, nil
+	case "unassigned":
+		return nil, true, nil
+	default:
+		if !isValidUUID(projectFlag) {
+			return nil, false, fmt.Errorf("Invalid project ID format: %s", projectFlag)
+		}
+		return projectFlag, true, nil
+	}
+}
+
+// levenshtein computes the Levenshtein distance between two strings.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	dp := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		dp[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		prev := i - 1
+		dp[0] = i
+		for j := 1; j <= lb; j++ {
+			temp := dp[j]
+			cost := 0
+			if ra[i-1] != rb[j-1] {
+				cost = 1
+			}
+			// min of delete, insert, substitute
+			del := dp[j] + 1
+			ins := dp[j-1] + 1
+			sub := prev + cost
+			m := del
+			if ins < m {
+				m = ins
+			}
+			if sub < m {
+				m = sub
+			}
+			dp[j] = m
+			prev = temp
+		}
+	}
+	return dp[lb]
+}
+
+// closestMatches returns up to k label names with the smallest edit distance to target.
+func closestMatches(target string, candidates []string, k int) []string {
+	type pair struct {
+		name string
+		d    int
+	}
+	target = strings.ToLower(strings.TrimSpace(target))
+	arr := make([]pair, 0, len(candidates))
+	for _, c := range candidates {
+		c2 := strings.ToLower(strings.TrimSpace(c))
+		if c2 == "" {
+			continue
+		}
+		arr = append(arr, pair{name: c, d: levenshtein(target, c2)})
+	}
+	sort.Slice(arr, func(i, j int) bool { return arr[i].d < arr[j].d })
+	n := k
+	if len(arr) < k {
+		n = len(arr)
+	}
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, arr[i].name)
+	}
+	return out
+}
+
+// lookupIssueLabelIDsByNames looks up issue label IDs from comma-separated names.
+// - Trims whitespace, deduplicates case-insensitively
+// - Returns helpful error with up to 3 closest matches for unknown labels
+func lookupIssueLabelIDsByNames(ctx context.Context, client *api.Client, names string) ([]string, error) {
+	if strings.TrimSpace(names) == "" {
+		return []string{}, nil
+	}
+
+	// Split, trim, dedup (case-insensitive)
+	raw := strings.Split(names, ",")
+	seen := make(map[string]struct{})
+	cleaned := make([]string, 0, len(raw))
+	for _, n := range raw {
+		t := strings.TrimSpace(n)
+		if t == "" {
+			continue
+		}
+		key := strings.ToLower(t)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, t)
+	}
+
+	labels, err := client.GetIssueLabels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get issue labels: %v", err)
+	}
+	nameToID := make(map[string]string, len(labels.Nodes))
+	allNames := make([]string, 0, len(labels.Nodes))
+	for _, l := range labels.Nodes {
+		lower := strings.ToLower(l.Name)
+		nameToID[lower] = l.ID
+		allNames = append(allNames, l.Name)
+	}
+
+	ids := make([]string, 0, len(cleaned))
+	for _, n := range cleaned {
+		id, ok := nameToID[strings.ToLower(n)]
+		if !ok {
+			// Build suggestions list
+			sug := closestMatches(n, allNames, 3)
+			if len(sug) > 0 {
+				return nil, fmt.Errorf("issue label not found: '%s' (did you mean: %s)", n, strings.Join(sug, ", "))
+			}
+			return nil, fmt.Errorf("issue label not found: '%s'", n)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // issueCmd represents the issue command
@@ -930,34 +1056,50 @@ var issueCreateCmd = &cobra.Command{
 			input["assigneeId"] = viewer.ID
 		}
 
-            // Handle project assignment
-            if cmd.Flags().Changed("project") {
-                projectID, _ := cmd.Flags().GetString("project")
-                if val, ok, err := buildProjectInput(projectID); err != nil {
-                    output.Error(err.Error(), plaintext, jsonOut)
-                    os.Exit(1)
-                } else if ok {
-                    // For create, "unassigned" is equivalent to not setting project
-                    if val != nil {
-                        input["projectId"] = val
-                    }
-                }
-            }
+		// Handle project assignment
+		if cmd.Flags().Changed("project") {
+			projectID, _ := cmd.Flags().GetString("project")
+			if val, ok, err := buildProjectInput(projectID); err != nil {
+				output.Error(err.Error(), plaintext, jsonOut)
+				os.Exit(1)
+			} else if ok {
+				// For create, "unassigned" is equivalent to not setting project
+				if val != nil {
+					input["projectId"] = val
+				}
+			}
+		}
+
+		// Handle label assignment on create (optional)
+		if cmd.Flags().Changed("label") {
+			labelsCSV, _ := cmd.Flags().GetString("label")
+			// Empty string means clear (no labels) — equivalent to not setting
+			if strings.TrimSpace(labelsCSV) != "" {
+				ids, err := lookupIssueLabelIDsByNames(context.Background(), client, labelsCSV)
+				if err != nil {
+					output.Error(err.Error(), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["labelIds"] = ids
+			} else {
+				input["labelIds"] = []string{}
+			}
+		}
 
 		// Create issue
-			issue, err := client.CreateIssue(context.Background(), input)
-			if err != nil {
-				// Standardize project not-found error when a project was provided
-				if cmd.Flags().Changed("project") {
-					projectID, _ := cmd.Flags().GetString("project")
-					if projectID != "" && projectID != "unassigned" && isProjectNotFoundErr(err) {
-						output.Error(fmt.Sprintf("Project '%s' not found", projectID), plaintext, jsonOut)
-						os.Exit(1)
-					}
+		issue, err := client.CreateIssue(context.Background(), input)
+		if err != nil {
+			// Standardize project not-found error when a project was provided
+			if cmd.Flags().Changed("project") {
+				projectID, _ := cmd.Flags().GetString("project")
+				if projectID != "" && projectID != "unassigned" && isProjectNotFoundErr(err) {
+					output.Error(fmt.Sprintf("Project '%s' not found", projectID), plaintext, jsonOut)
+					os.Exit(1)
 				}
-				output.Error(fmt.Sprintf("Failed to create issue: %v", err), plaintext, jsonOut)
-				os.Exit(1)
 			}
+			output.Error(fmt.Sprintf("Failed to create issue: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
 
 		if jsonOut {
 			output.JSON(issue)
@@ -1117,16 +1259,63 @@ Examples:
 			}
 		}
 
-            // Handle project assignment update
-            if cmd.Flags().Changed("project") {
-                projectID, _ := cmd.Flags().GetString("project")
-                if val, ok, err := buildProjectInput(projectID); err != nil {
-                    output.Error(err.Error(), plaintext, jsonOut)
-                    os.Exit(1)
-                } else if ok {
-                    input["projectId"] = val
-                }
-            }
+		// Handle project assignment update
+		if cmd.Flags().Changed("project") {
+			projectID, _ := cmd.Flags().GetString("project")
+			if val, ok, err := buildProjectInput(projectID); err != nil {
+				output.Error(err.Error(), plaintext, jsonOut)
+				os.Exit(1)
+			} else if ok {
+				input["projectId"] = val
+			}
+		}
+
+		// Handle label operations
+		// Precedence: --label (set/clear) takes precedence over add/remove
+		labelSet := cmd.Flags().Changed("label")
+		addSet := cmd.Flags().Changed("add-label")
+		removeSet := cmd.Flags().Changed("remove-label")
+		if labelSet {
+			labelsCSV, _ := cmd.Flags().GetString("label")
+			if strings.TrimSpace(labelsCSV) == "" {
+				// Explicit clear all labels
+				input["labelIds"] = []string{}
+			} else {
+				ids, err := lookupIssueLabelIDsByNames(context.Background(), client, labelsCSV)
+				if err != nil {
+					output.Error(err.Error(), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["labelIds"] = ids
+			}
+			// If add/remove also provided, warn that they are ignored
+			if (addSet || removeSet) && !jsonOut {
+				fmt.Println("Warning: --label specified; ignoring --add-label/--remove-label as per precedence rule")
+			}
+		} else {
+			if addSet {
+				addCSV, _ := cmd.Flags().GetString("add-label")
+				if strings.TrimSpace(addCSV) != "" {
+					ids, err := lookupIssueLabelIDsByNames(context.Background(), client, addCSV)
+					if err != nil {
+						output.Error(err.Error(), plaintext, jsonOut)
+						os.Exit(1)
+					}
+					input["addLabelIds"] = ids
+				}
+			}
+			if removeSet {
+				removeCSV, _ := cmd.Flags().GetString("remove-label")
+				if strings.TrimSpace(removeCSV) != "" {
+					ids, err := lookupIssueLabelIDsByNames(context.Background(), client, removeCSV)
+					if err != nil {
+						output.Error(err.Error(), plaintext, jsonOut)
+						os.Exit(1)
+					}
+					input["removeLabelIds"] = ids
+				}
+			}
+		}
 
 		// Check if any updates were specified
 		if len(input) == 0 {
@@ -1135,19 +1324,19 @@ Examples:
 		}
 
 		// Update the issue
-			issue, err := client.UpdateIssue(context.Background(), args[0], input)
-			if err != nil {
-				// Standardize project not-found error when a project was provided
-				if cmd.Flags().Changed("project") {
-					projectID, _ := cmd.Flags().GetString("project")
-					if projectID != "" && projectID != "unassigned" && isProjectNotFoundErr(err) {
-						output.Error(fmt.Sprintf("Project '%s' not found", projectID), plaintext, jsonOut)
-						os.Exit(1)
-					}
+		issue, err := client.UpdateIssue(context.Background(), args[0], input)
+		if err != nil {
+			// Standardize project not-found error when a project was provided
+			if cmd.Flags().Changed("project") {
+				projectID, _ := cmd.Flags().GetString("project")
+				if projectID != "" && projectID != "unassigned" && isProjectNotFoundErr(err) {
+					output.Error(fmt.Sprintf("Project '%s' not found", projectID), plaintext, jsonOut)
+					os.Exit(1)
 				}
-				output.Error(fmt.Sprintf("Failed to update issue: %v", err), plaintext, jsonOut)
-				os.Exit(1)
 			}
+			output.Error(fmt.Sprintf("Failed to update issue: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
 
 		if jsonOut {
 			output.JSON(issue)
@@ -1196,6 +1385,7 @@ func init() {
 	issueCreateCmd.Flags().Int("priority", 3, "Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)")
 	issueCreateCmd.Flags().BoolP("assign-me", "m", false, "Assign to yourself")
 	issueCreateCmd.Flags().String("project", "", "Project ID to assign issue to")
+	issueCreateCmd.Flags().String("label", "", "Comma-separated labels to set during creation (e.g., 'bug,backend')")
 	_ = issueCreateCmd.MarkFlagRequired("title")
 	_ = issueCreateCmd.MarkFlagRequired("team")
 
@@ -1207,4 +1397,7 @@ func init() {
 	issueUpdateCmd.Flags().Int("priority", -1, "Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)")
 	issueUpdateCmd.Flags().String("due-date", "", "Due date (YYYY-MM-DD format, or empty to remove)")
 	issueUpdateCmd.Flags().String("project", "", "Project ID to assign issue to (or 'unassigned' to remove)")
+	issueUpdateCmd.Flags().String("label", "", "Set labels exactly (comma-separated). Empty string clears all labels. Takes precedence over add/remove.")
+	issueUpdateCmd.Flags().String("add-label", "", "Add labels (comma-separated). Ignored if --label is provided.")
+	issueUpdateCmd.Flags().String("remove-label", "", "Remove labels (comma-separated). Ignored if --label is provided.")
 }

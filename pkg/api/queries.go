@@ -1800,6 +1800,33 @@ func (c *Client) GetProjectLabels(ctx context.Context) (*Labels, error) {
 	return &response.ProjectLabels, nil
 }
 
+// GetIssueLabels returns all issue labels in the workspace
+func (c *Client) GetIssueLabels(ctx context.Context) (*Labels, error) {
+	query := `
+        query IssueLabels {
+            issueLabels {
+                nodes {
+                    id
+                    name
+                    color
+                    description
+                }
+            }
+        }
+    `
+
+	var response struct {
+		IssueLabels Labels `json:"issueLabels"`
+	}
+
+	err := c.Execute(ctx, query, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response.IssueLabels, nil
+}
+
 // ListProjectMilestones returns milestones for a specific project
 func (c *Client) ListProjectMilestones(ctx context.Context, projectID string, includeArchived bool) (*ProjectMilestones, error) {
 	query := `
