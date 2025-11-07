@@ -13,6 +13,7 @@ A comprehensive command-line interface for Linear's API, built with agents in mi
   - Attachments and recent comments preview
   - Due dates, snoozed status, and completion tracking
   - Full-text search via `linctl issue search`
+  - Label management with intelligent lookup and suggestions (set, add, remove operations)
 - 👥 **Team Management**: View teams, get team details, and list team members
 - 🚀 **Project Tracking**: Comprehensive project information
   - Progress visualization with issue statistics
@@ -253,8 +254,9 @@ linctl issue new [flags]      # Alias
   --title string           Issue title (required)
   -d, --description string Issue description
   -t, --team string        Team key (required)
-  --priority int       Priority 0-4 (default 3)
+  --priority int           Priority 0-4 (default 3)
   -m, --assign-me          Assign to yourself
+  --label string           Comma-separated label names or IDs (e.g., "bug,urgent")
 
 # Assign issue to yourself
 linctl issue assign <issue-id>
@@ -269,6 +271,11 @@ linctl issue edit <issue-id> [flags]    # Alias
   -s, --state string       State name (e.g., 'Todo', 'In Progress', 'Done')
   --priority int           Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)
   --due-date string        Due date (YYYY-MM-DD format, or empty to remove)
+  --label string           Set labels (comma-separated names/IDs, or "" to clear all)
+  --add-label string       Add labels incrementally (comma-separated)
+  --remove-label string    Remove labels incrementally (comma-separated)
+
+# Label Precedence: If --label is provided, --add-label and --remove-label are ignored
 
 # Archive issue (coming soon)
 linctl issue archive <issue-id>
@@ -617,6 +624,9 @@ echo "All time: $(linctl issue list --newer-than all_time --json | jq '. | lengt
 # Create and assign issue in one command
 linctl issue create --title "Fix bug" --team ENG --assign-me --json
 
+# Create issue with labels
+linctl issue create --title "API bug" --team ENG --label "bug,backend,urgent" --json
+
 # Get all projects for a team
 linctl project list --team ENG --json | jq '.[] | {name, progress}'
 
@@ -674,6 +684,39 @@ for issue in LIN-123 LIN-124 LIN-125; do
 done
 ```
 
+### Label Management
+```bash
+# List all issues with a specific label
+linctl issue list --json | jq '.[] | select(.labels | map(.name) | contains(["bug"]))'
+
+# Find issues with multiple labels (AND logic)
+linctl issue list --json | jq '.[] | select(
+  (.labels | map(.name) | contains(["bug"])) and
+  (.labels | map(.name) | contains(["urgent"]))
+)'
+
+# Bulk add label to multiple issues
+for issue in LIN-123 LIN-124 LIN-125; do
+  linctl issue update $issue --add-label "needs-review"
+done
+
+# Remove label from all issues in a team
+linctl issue list --team ENG --json | jq -r '.[].identifier' | while read issue; do
+  linctl issue update $issue --remove-label "deprecated"
+done
+
+# Replace one label with another across issues
+linctl issue list --json | jq -r '.[] | select(.labels | map(.name) | contains(["old-label"])) | .identifier' | while read issue; do
+  linctl issue update $issue --remove-label "old-label" --add-label "new-label"
+done
+
+# Get label distribution across issues
+linctl issue list --json | jq '[.[] | .labels[] | .name] | group_by(.) | map({label: .[0], count: length})'
+
+# Find issues with no labels
+linctl issue list --json | jq '.[] | select(.labels == null or (.labels | length) == 0) | {id: .identifier, title: .title}'
+```
+
 ### Project Tracking
 ```bash
 # List projects nearing completion (>80% progress)
@@ -720,6 +763,8 @@ Linear has the following rate limits:
 - `Not authenticated`: Run `linctl auth` first
 - `Team not found`: Use team key (e.g., "ENG") not display name
 - `Invalid priority`: Use numbers 0-4 (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)
+- `Label not found`: Check label name spelling; linctl will suggest closest matches
+  - Solution: Use exact label name or ID provided in suggestions
 
 ### Time Filtering Issues
 - **Missing old issues?** Remember that list commands default to showing only the last 6 months
