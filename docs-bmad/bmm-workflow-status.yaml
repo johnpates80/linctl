@@ -73,7 +73,7 @@ current_stories:
   - id: "3-1"
     slug: "parent-flags"
     title: "Parent Flags on Create/Update"
-    status: "drafted"
+    status: "in-progress"
     path: "docs-bmad/stories/story-parent-flags-3-1.md"
   - id: "3-2"
     slug: "parent-filters"

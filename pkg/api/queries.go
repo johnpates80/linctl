@@ -456,17 +456,22 @@ func (c *Client) GetIssues(ctx context.Context, filter map[string]interface{}, f
 						key
 						name
 					}
-					project {
-						id
-						name
-					}
-					labels {
-						nodes {
+						project {
 							id
 							name
-							color
 						}
-					}
+						parent {
+							id
+							identifier
+							title
+						}
+						labels {
+							nodes {
+								id
+								name
+								color
+							}
+						}
 				}
 				pageInfo {
 					hasNextPage
@@ -533,15 +538,20 @@ func (c *Client) IssueSearch(ctx context.Context, term string, filter map[string
 						key
 						name
 					}
-					project {
-						id
-						name
-					}
-					labels {
-						nodes {
+						project {
 							id
 							name
-							color
+						}
+						parent {
+							id
+							identifier
+							title
+						}
+						labels {
+							nodes {
+								id
+								name
+								color
 						}
 					}
 				}
