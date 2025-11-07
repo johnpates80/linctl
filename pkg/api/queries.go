@@ -463,6 +463,7 @@ func (c *Client) GetIssues(ctx context.Context, filter map[string]interface{}, f
 						parent {
 							id
 							identifier
+							title
 						}
 						labels {
 							nodes {
@@ -544,6 +545,7 @@ func (c *Client) IssueSearch(ctx context.Context, term string, filter map[string
 						parent {
 							id
 							identifier
+							title
 						}
 						labels {
 							nodes {

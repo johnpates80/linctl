@@ -474,9 +474,9 @@ linctl comment create LIN-456 --body "@john please review this PR"
 linctl issue list
 ```
 ```
-TITLE                  STATE         ASSIGNEE    TEAM  PROJECT                 LABELS         CREATED     URL
-Fix authentication     In Progress   John Doe    ENG   Backend Revamp          bug, backend   2025-07-12  https://linear.app/.../fix-authentication
-Update documentation   Done          Jane Smith  DOC   Docs Refresh            -              2025-07-11  https://linear.app/.../update-documentation
+TITLE                  STATE         ASSIGNEE    TEAM  PROJECT                 PARENT   LABELS         CREATED     URL
+Fix authentication     In Progress   John Doe    ENG   Backend Revamp          RAE-120   bug, backend   2025-07-12  https://linear.app/.../fix-authentication
+Update documentation   Done          Jane Smith  DOC   Docs Refresh            -         -              2025-07-11  https://linear.app/.../update-documentation
 ```
 
 ### Plaintext Format
