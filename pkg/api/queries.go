@@ -1724,3 +1724,149 @@ func (c *Client) UpdateProject(ctx context.Context, id string, input map[string]
 
 	return &response.ProjectUpdate.Project, nil
 }
+
+// GetProjectLabels returns all project labels in the workspace
+func (c *Client) GetProjectLabels(ctx context.Context) (*Labels, error) {
+    query := `
+        query ProjectLabels {
+            projectLabels {
+                nodes {
+                    id
+                    name
+                    color
+                    description
+                }
+            }
+        }
+    `
+
+    var response struct {
+        ProjectLabels Labels `json:"projectLabels"`
+    }
+
+    err := c.Execute(ctx, query, nil, &response)
+    if err != nil {
+        return nil, err
+    }
+
+    return &response.ProjectLabels, nil
+}
+
+// ListProjectUpdates returns all updates for a specific project
+func (c *Client) ListProjectUpdates(ctx context.Context, projectID string) (*ProjectUpdates, error) {
+    query := `
+        query ProjectUpdates($projectId: String!) {
+            project(id: $projectId) {
+                projectUpdates {
+                    nodes {
+                        id
+                        body
+                        health
+                        createdAt
+                        updatedAt
+                        editedAt
+                        user {
+                            id
+                            name
+                            email
+                        }
+                    }
+                }
+            }
+        }
+    `
+
+    variables := map[string]interface{}{
+        "projectId": projectID,
+    }
+
+    var response struct {
+        Project struct {
+            ProjectUpdates ProjectUpdates `json:"projectUpdates"`
+        } `json:"project"`
+    }
+
+    err := c.Execute(ctx, query, variables, &response)
+    if err != nil {
+        return nil, err
+    }
+
+    return &response.Project.ProjectUpdates, nil
+}
+
+// GetProjectUpdate returns a specific project update
+func (c *Client) GetProjectUpdate(ctx context.Context, updateID string) (*ProjectUpdate, error) {
+    query := `
+        query ProjectUpdate($id: String!) {
+            projectUpdate(id: $id) {
+                id
+                body
+                health
+                createdAt
+                updatedAt
+                editedAt
+                user {
+                    id
+                    name
+                    email
+                }
+            }
+        }
+    `
+
+    variables := map[string]interface{}{
+        "id": updateID,
+    }
+
+    var response struct {
+        ProjectUpdate ProjectUpdate `json:"projectUpdate"`
+    }
+
+    err := c.Execute(ctx, query, variables, &response)
+    if err != nil {
+        return nil, err
+    }
+
+    return &response.ProjectUpdate, nil
+}
+
+// CreateProjectUpdate creates a new project update
+func (c *Client) CreateProjectUpdate(ctx context.Context, input map[string]interface{}) (*ProjectUpdate, error) {
+    query := `
+        mutation CreateProjectUpdate($input: ProjectUpdateCreateInput!) {
+            projectUpdateCreate(input: $input) {
+                success
+                projectUpdate {
+                    id
+                    body
+                    health
+                    createdAt
+                    updatedAt
+                    user {
+                        id
+                        name
+                        email
+                    }
+                }
+            }
+        }
+    `
+
+    variables := map[string]interface{}{
+        "input": input,
+    }
+
+    var response struct {
+        ProjectUpdateCreate struct {
+            Success       bool          `json:"success"`
+            ProjectUpdate ProjectUpdate `json:"projectUpdate"`
+        } `json:"projectUpdateCreate"`
+    }
+
+    err := c.Execute(ctx, query, variables, &response)
+    if err != nil {
+        return nil, err
+    }
+
+    return &response.ProjectUpdateCreate.ProjectUpdate, nil
+}

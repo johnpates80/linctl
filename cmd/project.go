@@ -1,30 +1,33 @@
 package cmd
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "strings"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
 
-    "github.com/dorkitude/linctl/pkg/api"
-    "github.com/dorkitude/linctl/pkg/auth"
-    "github.com/dorkitude/linctl/pkg/output"
-    "github.com/dorkitude/linctl/pkg/utils"
-    "github.com/fatih/color"
-    "github.com/spf13/cobra"
-    "github.com/spf13/viper"
+	"github.com/dorkitude/linctl/pkg/api"
+	"github.com/dorkitude/linctl/pkg/auth"
+	"github.com/dorkitude/linctl/pkg/output"
+	"github.com/dorkitude/linctl/pkg/utils"
+	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // projectAPI captures the subset of API client used by project commands.
 // This enables dependency injection in tests without changing public API types.
 type projectAPI interface {
-    GetTeam(ctx context.Context, key string) (*api.Team, error)
-    GetProjects(ctx context.Context, filter map[string]interface{}, first int, after string, orderBy string) (*api.Projects, error)
-    CreateProject(ctx context.Context, input map[string]interface{}) (*api.Project, error)
-    UpdateProject(ctx context.Context, id string, input map[string]interface{}) (*api.Project, error)
-    ArchiveProject(ctx context.Context, id string) (bool, error)
-    GetProject(ctx context.Context, id string) (*api.Project, error)
+	GetTeam(ctx context.Context, key string) (*api.Team, error)
+	GetProjects(ctx context.Context, filter map[string]interface{}, first int, after string, orderBy string) (*api.Projects, error)
+	CreateProject(ctx context.Context, input map[string]interface{}) (*api.Project, error)
+	UpdateProject(ctx context.Context, id string, input map[string]interface{}) (*api.Project, error)
+	ArchiveProject(ctx context.Context, id string) (bool, error)
+	GetProject(ctx context.Context, id string) (*api.Project, error)
+	CreateProjectUpdate(ctx context.Context, input map[string]interface{}) (*api.ProjectUpdate, error)
+	ListProjectUpdates(ctx context.Context, projectID string) (*api.ProjectUpdates, error)
+	GetProjectUpdate(ctx context.Context, updateID string) (*api.ProjectUpdate, error)
 }
 
 // Injection points for testing
@@ -47,6 +50,98 @@ func constructProjectURL(projectID string, originalURL string) string {
 
 	// Fallback to original URL if we can't parse it
 	return originalURL
+}
+
+// validateHexColor validates a hex color code format
+func validateHexColor(color string) error {
+	if color == "" {
+		return nil
+	}
+	if !strings.HasPrefix(color, "#") || (len(color) != 4 && len(color) != 7) {
+		return fmt.Errorf("invalid hex color format (expected #RGB or #RRGGBB)")
+	}
+	// Check if all characters after # are valid hex
+	for _, c := range color[1:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return fmt.Errorf("invalid hex color format")
+		}
+	}
+	return nil
+}
+
+// lookupUserIDsByEmails looks up user IDs from comma-separated emails
+func lookupUserIDsByEmails(ctx context.Context, client projectAPI, emails string) ([]string, error) {
+	if emails == "" {
+		return nil, nil
+	}
+
+	emailList := strings.Split(emails, ",")
+	userIDs := make([]string, 0, len(emailList))
+
+	// Type assert to get the full API client
+	fullClient, ok := client.(*api.Client)
+	if !ok {
+		return nil, fmt.Errorf("client type assertion failed")
+	}
+
+	for _, email := range emailList {
+		email = strings.TrimSpace(email)
+		if email == "" {
+			continue
+		}
+
+		user, err := fullClient.GetUser(ctx, email)
+		if err != nil {
+			return nil, fmt.Errorf("user not found with email '%s': %v", email, err)
+		}
+		userIDs = append(userIDs, user.ID)
+	}
+
+	return userIDs, nil
+}
+
+// lookupLabelIDsByNames looks up project label IDs from comma-separated names
+func lookupLabelIDsByNames(ctx context.Context, client projectAPI, names string) ([]string, error) {
+	if names == "" {
+		return nil, nil
+	}
+
+	nameList := strings.Split(names, ",")
+	labelIDs := make([]string, 0, len(nameList))
+
+	// Type assert to get the full API client
+	fullClient, ok := client.(*api.Client)
+	if !ok {
+		return nil, fmt.Errorf("client type assertion failed")
+	}
+
+	// Get all project labels
+	labels, err := fullClient.GetProjectLabels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get project labels: %v", err)
+	}
+
+	// Build a map of label names to IDs for quick lookup
+	labelMap := make(map[string]string)
+	for _, label := range labels.Nodes {
+		labelMap[strings.ToLower(label.Name)] = label.ID
+	}
+
+	// Look up each requested label
+	for _, name := range nameList {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+
+		labelID, found := labelMap[strings.ToLower(name)]
+		if !found {
+			return nil, fmt.Errorf("project label not found: '%s'", name)
+		}
+		labelIDs = append(labelIDs, labelID)
+	}
+
+	return labelIDs, nil
 }
 
 // projectCmd represents the project command
@@ -72,15 +167,15 @@ var projectListCmd = &cobra.Command{
 		plaintext := viper.GetBool("plaintext")
 		jsonOut := viper.GetBool("json")
 
-            // Get auth header
-            authHeader, err := getAuthHeader()
+		// Get auth header
+		authHeader, err := getAuthHeader()
 		if err != nil {
 			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
 			os.Exit(1)
 		}
 
-            // Create API client
-            client := newAPIClient(authHeader)
+		// Create API client
+		client := newAPIClient(authHeader)
 
 		// Get filters
 		teamKey, _ := cmd.Flags().GetString("team")
@@ -267,15 +362,15 @@ var projectGetCmd = &cobra.Command{
 		jsonOut := viper.GetBool("json")
 		projectID := args[0]
 
-            // Get auth header
-            authHeader, err := getAuthHeader()
+		// Get auth header
+		authHeader, err := getAuthHeader()
 		if err != nil {
 			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
 			os.Exit(1)
 		}
 
-            // Create API client
-            client := newAPIClient(authHeader)
+		// Create API client
+		client := newAPIClient(authHeader)
 
 		// Get project details
 		project, err := client.GetProject(context.Background(), projectID)
@@ -687,15 +782,15 @@ Examples:
 			os.Exit(1)
 		}
 
-        // Get auth header
-        authHeader, err := getAuthHeader()
+		// Get auth header
+		authHeader, err := getAuthHeader()
 		if err != nil {
 			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
 			os.Exit(1)
 		}
 
-        // Create API client
-        client := newAPIClient(authHeader)
+		// Create API client
+		client := newAPIClient(authHeader)
 
 		// Resolve team key to team UUID
 		team, err := client.GetTeam(context.Background(), teamKey)
@@ -725,29 +820,76 @@ Examples:
 			}
 		}
 
-    // Validate priority if provided
-    var priority int
-    if cmd.Flags().Changed("priority") {
-        priority, _ = cmd.Flags().GetInt("priority")
-        if priority < 0 || priority > 4 {
-            output.Error("Priority must be between 0 (None) and 4 (Low)", plaintext, jsonOut)
-            os.Exit(1)
-        }
-    }
+		// Validate priority if provided
+		var priority int
+		if cmd.Flags().Changed("priority") {
+			priority, _ = cmd.Flags().GetInt("priority")
+			if priority < 0 || priority > 4 {
+				output.Error("Priority must be between 0 (None) and 4 (Low)", plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
 
-    // Validate target-date format if provided (YYYY-MM-DD)
-    if targetDate != "" {
-        if _, err := time.Parse("2006-01-02", targetDate); err != nil {
-            output.Error("Invalid --target-date format. Expected YYYY-MM-DD", plaintext, jsonOut)
-            os.Exit(1)
-        }
-    }
+		// Validate target-date format if provided (YYYY-MM-DD)
+		if targetDate != "" {
+			if _, err := time.Parse("2006-01-02", targetDate); err != nil {
+				output.Error("Invalid --target-date format. Expected YYYY-MM-DD", plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
 
-    // Build input map
-    input := map[string]interface{}{
-        "name":   name,
-        "teamIds": []string{team.ID},
-    }
+		// Get and validate new optional fields
+		startDate, _ := cmd.Flags().GetString("start-date")
+		if startDate != "" {
+			if _, err := time.Parse("2006-01-02", startDate); err != nil {
+				output.Error("Invalid --start-date format. Expected YYYY-MM-DD", plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		leadEmail, _ := cmd.Flags().GetString("lead")
+		members, _ := cmd.Flags().GetString("members")
+		labelNames, _ := cmd.Flags().GetString("label")
+		icon, _ := cmd.Flags().GetString("icon")
+		projectColor, _ := cmd.Flags().GetString("color")
+		links, _ := cmd.Flags().GetStringArray("link")
+
+		// Validate color format
+		if err := validateHexColor(projectColor); err != nil {
+			output.Error(err.Error(), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Look up lead user ID
+		var leadID string
+		if leadEmail != "" {
+			user, err := client.(*api.Client).GetUser(context.Background(), leadEmail)
+			if err != nil {
+				output.Error(fmt.Sprintf("Lead user not found with email '%s': %v", leadEmail, err), plaintext, jsonOut)
+				os.Exit(1)
+			}
+			leadID = user.ID
+		}
+
+		// Look up member user IDs
+		memberIDs, err := lookupUserIDsByEmails(context.Background(), client, members)
+		if err != nil {
+			output.Error(err.Error(), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Look up label IDs
+		labelIDs, err := lookupLabelIDsByNames(context.Background(), client, labelNames)
+		if err != nil {
+			output.Error(err.Error(), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Build input map
+		input := map[string]interface{}{
+			"name":    name,
+			"teamIds": []string{team.ID},
+		}
 
 		if description != "" {
 			input["description"] = description
@@ -758,8 +900,31 @@ Examples:
 		if cmd.Flags().Changed("priority") {
 			input["priority"] = priority
 		}
+		if startDate != "" {
+			input["startDate"] = startDate
+		}
 		if targetDate != "" {
 			input["targetDate"] = targetDate
+		}
+		if leadID != "" {
+			input["leadId"] = leadID
+		}
+		if len(memberIDs) > 0 {
+			input["memberIds"] = memberIDs
+		}
+		if len(labelIDs) > 0 {
+			input["labelIds"] = labelIDs
+		}
+		if icon != "" {
+			input["icon"] = icon
+		}
+		if projectColor != "" {
+			input["color"] = projectColor
+		}
+		if len(links) > 0 {
+			// For now, we'll just add the first link as a simple string
+			// TODO: Investigate if Linear supports multiple links or structured link objects
+			input["links"] = links
 		}
 
 		// Create project
@@ -826,59 +991,59 @@ Examples:
 			os.Exit(1)
 		}
 
-        // Get auth header
-        authHeader, err := getAuthHeader()
+		// Get auth header
+		authHeader, err := getAuthHeader()
 		if err != nil {
 			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
 			os.Exit(1)
 		}
 
-        // Create API client
-        client := newAPIClient(authHeader)
+		// Create API client
+		client := newAPIClient(authHeader)
 
-        // Archive project
-        success, err := client.ArchiveProject(context.Background(), projectID)
-        if err != nil {
-            output.Error(fmt.Sprintf("Failed to archive project: %v", err), plaintext, jsonOut)
-            os.Exit(1)
-        }
+		// Archive project
+		success, err := client.ArchiveProject(context.Background(), projectID)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to archive project: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
 
-        // Try to fetch project details to include the name in output (best effort)
-        var projectName string
-        if success {
-            if proj, gerr := client.GetProject(context.Background(), projectID); gerr == nil && proj != nil {
-                projectName = proj.Name
-            }
-        }
+		// Try to fetch project details to include the name in output (best effort)
+		var projectName string
+		if success {
+			if proj, gerr := client.GetProject(context.Background(), projectID); gerr == nil && proj != nil {
+				projectName = proj.Name
+			}
+		}
 
-        // Handle output
-        if jsonOut {
-            payload := map[string]interface{}{
-                "success":    success,
-                "projectId":  projectID,
-            }
-            if projectName != "" {
-                payload["projectName"] = projectName
-            }
-            output.JSON(payload)
-        } else if plaintext {
-            fmt.Printf("# Project Archived\n\n")
-            if projectName != "" {
-                fmt.Printf("- **Name**: %s\n", projectName)
-            }
-            fmt.Printf("- **Project ID**: %s\n", projectID)
-            fmt.Printf("- **Status**: Archived\n")
-        } else {
-            fmt.Println()
-            fmt.Printf("%s Project archived successfully\n", color.New(color.FgGreen).Sprint("✓"))
-            fmt.Println()
-            if projectName != "" {
-                fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Name:"), projectName)
-            }
-            fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Project ID:"), projectID)
-            fmt.Println()
-        }
-    },
+		// Handle output
+		if jsonOut {
+			payload := map[string]interface{}{
+				"success":   success,
+				"projectId": projectID,
+			}
+			if projectName != "" {
+				payload["projectName"] = projectName
+			}
+			output.JSON(payload)
+		} else if plaintext {
+			fmt.Printf("# Project Archived\n\n")
+			if projectName != "" {
+				fmt.Printf("- **Name**: %s\n", projectName)
+			}
+			fmt.Printf("- **Project ID**: %s\n", projectID)
+			fmt.Printf("- **Status**: Archived\n")
+		} else {
+			fmt.Println()
+			fmt.Printf("%s Project archived successfully\n", color.New(color.FgGreen).Sprint("✓"))
+			fmt.Println()
+			if projectName != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Name:"), projectName)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Project ID:"), projectID)
+			fmt.Println()
+		}
+	},
 }
 
 var projectUpdateCmd = &cobra.Command{
@@ -944,6 +1109,67 @@ Examples:
 		if cmd.Flags().Changed("priority") {
 			priority, _ := cmd.Flags().GetInt("priority")
 			input["priority"] = priority
+		}
+		if cmd.Flags().Changed("start-date") {
+			startDate, _ := cmd.Flags().GetString("start-date")
+			if startDate != "" {
+				if _, err := time.Parse("2006-01-02", startDate); err != nil {
+					output.Error("Invalid --start-date format. Expected YYYY-MM-DD", plaintext, jsonOut)
+					os.Exit(1)
+				}
+			}
+			input["startDate"] = startDate
+		}
+		if cmd.Flags().Changed("lead") {
+			leadEmail, _ := cmd.Flags().GetString("lead")
+			if leadEmail != "" {
+				user, err := client.(*api.Client).GetUser(context.Background(), leadEmail)
+				if err != nil {
+					output.Error(fmt.Sprintf("Lead user not found with email '%s': %v", leadEmail, err), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["leadId"] = user.ID
+			}
+		}
+		if cmd.Flags().Changed("members") {
+			members, _ := cmd.Flags().GetString("members")
+			memberIDs, err := lookupUserIDsByEmails(context.Background(), client, members)
+			if err != nil {
+				output.Error(err.Error(), plaintext, jsonOut)
+				os.Exit(1)
+			}
+			if len(memberIDs) > 0 {
+				input["memberIds"] = memberIDs
+			}
+		}
+		if cmd.Flags().Changed("label") {
+			labelNames, _ := cmd.Flags().GetString("label")
+			labelIDs, err := lookupLabelIDsByNames(context.Background(), client, labelNames)
+			if err != nil {
+				output.Error(err.Error(), plaintext, jsonOut)
+				os.Exit(1)
+			}
+			if len(labelIDs) > 0 {
+				input["labelIds"] = labelIDs
+			}
+		}
+		if cmd.Flags().Changed("icon") {
+			icon, _ := cmd.Flags().GetString("icon")
+			input["icon"] = icon
+		}
+		if cmd.Flags().Changed("color") {
+			projectColor, _ := cmd.Flags().GetString("color")
+			if err := validateHexColor(projectColor); err != nil {
+				output.Error(err.Error(), plaintext, jsonOut)
+				os.Exit(1)
+			}
+			input["color"] = projectColor
+		}
+		if cmd.Flags().Changed("link") {
+			links, _ := cmd.Flags().GetStringArray("link")
+			if len(links) > 0 {
+				input["links"] = links
+			}
 		}
 
 		// Validate at least one field provided
@@ -1018,6 +1244,260 @@ Examples:
 	},
 }
 
+// Project update-post commands
+
+var projectUpdatePostCmd = &cobra.Command{
+	Use:   "update-post",
+	Short: "Manage project update posts",
+	Long:  `Create, list, and view project update posts.`,
+}
+
+var projectUpdatePostCreateCmd = &cobra.Command{
+	Use:   "create PROJECT-UUID",
+	Short: "Create a project update post",
+	Long: `Create a new update post for a project.
+
+The project UUID is required as the first argument.
+
+Examples:
+  linctl project update-post create PROJECT-UUID --body "Monthly update..."
+  linctl project update-post create PROJECT-UUID --body "Q1 progress" --health "onTrack"`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		projectID := args[0]
+		body, _ := cmd.Flags().GetString("body")
+		health, _ := cmd.Flags().GetString("health")
+
+		// Validate body is provided
+		if body == "" {
+			output.Error("--body is required", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Validate health if provided
+		if health != "" {
+			allowedHealth := []string{"onTrack", "atRisk", "offTrack"}
+			valid := false
+			for _, h := range allowedHealth {
+				if health == h {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				output.Error(fmt.Sprintf("Invalid health. Must be one of: %s", strings.Join(allowedHealth, ", ")), plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		// Get auth header
+		authHeader, err := getAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := newAPIClient(authHeader)
+
+		// Build input
+		input := map[string]interface{}{
+			"projectId": projectID,
+			"body":      body,
+		}
+		if health != "" {
+			input["health"] = health
+		}
+
+		// Create project update
+		update, err := client.CreateProjectUpdate(context.Background(), input)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to create project update: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if jsonOut {
+			output.JSON(update)
+			return
+		}
+
+		if plaintext {
+			fmt.Println("✓ Project update created successfully")
+			fmt.Printf("ID: %s\n", update.ID)
+			fmt.Printf("Created: %s\n", update.CreatedAt.Format("2006-01-02 15:04:05"))
+		} else {
+			fmt.Println()
+			fmt.Printf("%s Project update created successfully\n", color.New(color.FgGreen).Sprint("✓"))
+			fmt.Println()
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("ID:"), update.ID)
+			if update.User != nil {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Author:"), update.User.Name)
+			}
+			if update.Health != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Health:"), update.Health)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Created:"), update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Println()
+		}
+	},
+}
+
+var projectUpdatePostListCmd = &cobra.Command{
+	Use:   "list PROJECT-UUID",
+	Short: "List project update posts",
+	Long: `List all update posts for a project.
+
+Examples:
+  linctl project update-post list PROJECT-UUID
+  linctl project update-post list PROJECT-UUID --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		projectID := args[0]
+
+		// Get auth header
+		authHeader, err := getAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := newAPIClient(authHeader)
+
+		// List project updates
+		updates, err := client.ListProjectUpdates(context.Background(), projectID)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to list project updates: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if len(updates.Nodes) == 0 {
+			if jsonOut {
+				output.JSON([]interface{}{})
+			} else {
+				output.Info("No project updates found", plaintext, jsonOut)
+			}
+			return
+		}
+
+		if jsonOut {
+			output.JSON(updates.Nodes)
+			return
+		}
+
+		// Table output
+		headers := []string{"ID", "Author", "Health", "Created", "Updated"}
+		rows := [][]string{}
+
+		for _, update := range updates.Nodes {
+			author := ""
+			if update.User != nil {
+				author = update.User.Name
+			}
+
+			health := update.Health
+			if health == "" {
+				health = "N/A"
+			}
+
+			created := update.CreatedAt.Format("2006-01-02")
+			updated := update.UpdatedAt.Format("2006-01-02")
+
+			rows = append(rows, []string{
+				update.ID,
+				author,
+				health,
+				created,
+				updated,
+			})
+		}
+
+		output.Table(output.TableData{Headers: headers, Rows: rows}, plaintext, jsonOut)
+	},
+}
+
+var projectUpdatePostGetCmd = &cobra.Command{
+	Use:   "get UPDATE-UUID",
+	Short: "Get a project update post",
+	Long: `Get details of a specific project update post.
+
+Examples:
+  linctl project update-post get UPDATE-UUID
+  linctl project update-post get UPDATE-UUID --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		updateID := args[0]
+
+		// Get auth header
+		authHeader, err := getAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := newAPIClient(authHeader)
+
+		// Get project update
+		update, err := client.GetProjectUpdate(context.Background(), updateID)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to get project update: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if jsonOut {
+			output.JSON(update)
+			return
+		}
+
+		// Format output
+		if plaintext {
+			fmt.Printf("ID: %s\n", update.ID)
+			if update.User != nil {
+				fmt.Printf("Author: %s (%s)\n", update.User.Name, update.User.Email)
+			}
+			if update.Health != "" {
+				fmt.Printf("Health: %s\n", update.Health)
+			}
+			fmt.Printf("Created: %s\n", update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Updated: %s\n", update.UpdatedAt.Format("2006-01-02 15:04:05"))
+			if update.EditedAt != nil {
+				fmt.Printf("Edited: %s\n", update.EditedAt.Format("2006-01-02 15:04:05"))
+			}
+			fmt.Println()
+			fmt.Println("Body:")
+			fmt.Println(update.Body)
+		} else {
+			fmt.Println()
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("ID:"), update.ID)
+			if update.User != nil {
+				fmt.Printf("%s %s (%s)\n", color.New(color.Bold).Sprint("Author:"), update.User.Name, update.User.Email)
+			}
+			if update.Health != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Health:"), update.Health)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Created:"), update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Updated:"), update.UpdatedAt.Format("2006-01-02 15:04:05"))
+			if update.EditedAt != nil {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Edited:"), update.EditedAt.Format("2006-01-02 15:04:05"))
+			}
+			fmt.Println()
+			fmt.Println(color.New(color.Bold).Sprint("Body:"))
+			fmt.Println(update.Body)
+			fmt.Println()
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
@@ -1025,6 +1505,12 @@ func init() {
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectArchiveCmd)
 	projectCmd.AddCommand(projectUpdateCmd)
+	projectCmd.AddCommand(projectUpdatePostCmd)
+
+	// Project update-post subcommands
+	projectUpdatePostCmd.AddCommand(projectUpdatePostCreateCmd)
+	projectUpdatePostCmd.AddCommand(projectUpdatePostListCmd)
+	projectUpdatePostCmd.AddCommand(projectUpdatePostGetCmd)
 
 	// List command flags
 	projectListCmd.Flags().StringP("team", "t", "", "Filter by team key")
@@ -1040,7 +1526,14 @@ func init() {
 	projectCreateCmd.Flags().String("description", "", "Project description")
 	projectCreateCmd.Flags().String("state", "", "Project state (planned|started|paused|completed|canceled)")
 	projectCreateCmd.Flags().Int("priority", 0, "Priority (0-4: None, Urgent, High, Normal, Low)")
+	projectCreateCmd.Flags().String("start-date", "", "Start date (YYYY-MM-DD)")
 	projectCreateCmd.Flags().String("target-date", "", "Target date (YYYY-MM-DD)")
+	projectCreateCmd.Flags().String("lead", "", "Project lead (email)")
+	projectCreateCmd.Flags().String("members", "", "Project members (comma-separated emails)")
+	projectCreateCmd.Flags().String("label", "", "Project labels (comma-separated names)")
+	projectCreateCmd.Flags().String("icon", "", "Project icon (emoji)")
+	projectCreateCmd.Flags().String("color", "", "Project color (hex code, e.g., #ff6b6b)")
+	projectCreateCmd.Flags().StringArray("link", []string{}, "External link URL (can be specified multiple times)")
 
 	// Update command flags
 	projectUpdateCmd.Flags().String("name", "", "Project name")
@@ -1048,4 +1541,15 @@ func init() {
 	projectUpdateCmd.Flags().String("summary", "", "Project short summary")
 	projectUpdateCmd.Flags().String("state", "", "Project state (planned|started|paused|completed|canceled)")
 	projectUpdateCmd.Flags().Int("priority", 0, "Priority (0-4: None, Urgent, High, Normal, Low)")
+	projectUpdateCmd.Flags().String("start-date", "", "Start date (YYYY-MM-DD)")
+	projectUpdateCmd.Flags().String("lead", "", "Project lead (email)")
+	projectUpdateCmd.Flags().String("members", "", "Project members (comma-separated emails)")
+	projectUpdateCmd.Flags().String("label", "", "Project labels (comma-separated names)")
+	projectUpdateCmd.Flags().String("icon", "", "Project icon (emoji)")
+	projectUpdateCmd.Flags().String("color", "", "Project color (hex code, e.g., #ff6b6b)")
+	projectUpdateCmd.Flags().StringArray("link", []string{}, "External link URL (can be specified multiple times)")
+
+	// Project update-post create flags
+	projectUpdatePostCreateCmd.Flags().String("body", "", "Update post body (required)")
+	projectUpdatePostCreateCmd.Flags().String("health", "", "Project health (onTrack|atRisk|offTrack)")
 }
