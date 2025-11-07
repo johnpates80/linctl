@@ -1584,16 +1584,33 @@ Examples:
 			}
 		}
 
-		// Handle project assignment update
-		if cmd.Flags().Changed("project") {
-			projectID, _ := cmd.Flags().GetString("project")
-			if val, ok, err := buildProjectInput(projectID); err != nil {
-				output.Error(err.Error(), plaintext, jsonOut)
-				os.Exit(1)
-			} else if ok {
-				input["projectId"] = val
+			// Handle project assignment update
+			if cmd.Flags().Changed("project") {
+				projectID, _ := cmd.Flags().GetString("project")
+				if val, ok, err := buildProjectInput(projectID); err != nil {
+					output.Error(err.Error(), plaintext, jsonOut)
+					os.Exit(1)
+				} else if ok {
+					input["projectId"] = val
+				}
 			}
-		}
+
+			// Handle parent update (set/remove)
+			if cmd.Flags().Changed("parent") {
+				parentIdent, _ := cmd.Flags().GetString("parent")
+				parentIdent = strings.TrimSpace(parentIdent)
+				if parentIdent == "unassigned" || parentIdent == "" {
+					// Explicitly remove parent
+					input["parentId"] = nil
+				} else {
+					p, err := client.GetIssue(context.Background(), parentIdent)
+					if err != nil {
+						output.Error(fmt.Sprintf("Parent issue '%s' not found", parentIdent), plaintext, jsonOut)
+						os.Exit(1)
+					}
+					input["parentId"] = p.ID
+				}
+			}
 
 		// Handle label operations
 		// Precedence: --label (set/clear) takes precedence over add/remove
