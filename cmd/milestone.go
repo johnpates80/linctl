@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/dorkitude/linctl/pkg/api"
-	"github.com/dorkitude/linctl/pkg/auth"
-	"github.com/dorkitude/linctl/pkg/output"
+	"github.com/raegislabs/linctl/pkg/api"
+	"github.com/raegislabs/linctl/pkg/auth"
+	"github.com/raegislabs/linctl/pkg/output"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

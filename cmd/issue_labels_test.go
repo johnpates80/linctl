@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dorkitude/linctl/pkg/api"
+	"github.com/raegislabs/linctl/pkg/api"
 )
 
 func TestIssueUpdateCmd_LabelFlags_Help(t *testing.T) {
