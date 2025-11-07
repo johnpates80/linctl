@@ -40,3 +40,7 @@ development_status:
   1-2-project-creation-archival: done
   1-3-project-updates-enhanced-display: done
   epic-1-retrospective: optional
+  epic-2: backlog
+  2-1-issue-list-filters: review
+  2-2-issue-list-labels: review
+  2-3-label-operators: review
