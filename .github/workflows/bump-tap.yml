@@ -42,17 +42,20 @@ jobs:
           set -e
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-          git clone https://github.com/dorkitude/homebrew-linctl.git
+          git clone https://github.com/raegislabs/homebrew-linctl.git
           cd homebrew-linctl
           BRANCH="bump-linctl-${TAG#v}"
           git checkout -b "$BRANCH"
           # Update Formula
           sed -i.bak -E "s|url \"[^\"]+\"|url \"https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz\"|g" Formula/linctl.rb
           sed -i.bak -E "s|sha256 \"[0-9a-f]+\"|sha256 \"${SHA256}\"|g" Formula/linctl.rb
+          sed -i.bak -E "s|homepage \"[^\"]+\"|homepage \"https://github.com/${{ github.repository }}\"|g" Formula/linctl.rb
+          sed -i.bak -E "s|head \"[^\"]+\"|head \"https://github.com/${{ github.repository }}.git\"|g" Formula/linctl.rb
+          sed -i.bak -E "s|github.com/[^"]+/linctl/cmd.version|github.com/raegislabs/linctl/cmd.version|g" Formula/linctl.rb
           rm -f Formula/linctl.rb.bak
           git add Formula/linctl.rb
           git commit -m "linctl: bump to ${TAG}"
-          git push "https://${GH_TOKEN}@github.com/dorkitude/homebrew-linctl.git" HEAD:"$BRANCH"
+          git push "https://${GH_TOKEN}@github.com/raegislabs/homebrew-linctl.git" HEAD:"$BRANCH"
 
       - name: Open PR on tap repo
         env:
@@ -63,6 +66,5 @@ jobs:
           gh pr create \
             --title "linctl: bump to ${TAG}" \
             --body "Update formula to ${TAG}." \
-            --base master \
+            --base main \
             --head "$BRANCH"
-

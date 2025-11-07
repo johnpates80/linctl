@@ -13,6 +13,7 @@ A comprehensive command-line interface for Linear's API, built with agents in mi
   - Attachments and recent comments preview
   - Due dates, snoozed status, and completion tracking
   - Full-text search via `linctl issue search`
+  - Label management with intelligent lookup and suggestions (set, add, remove operations)
 - 👥 **Team Management**: View teams, get team details, and list team members
 - 🚀 **Project Tracking**: Comprehensive project information
   - Progress visualization with issue statistics
@@ -35,14 +36,14 @@ A comprehensive command-line interface for Linear's API, built with agents in mi
 
 ### Homebrew (macOS/Linux)
 ```bash
-brew tap dorkitude/linctl
+brew tap raegislabs/linctl
 brew install linctl
 linctl docs      # Render the README.md
 ```
 
 ### From Source
 ```bash
-git clone https://github.com/dorkitude/linctl.git
+git clone https://github.com/raegislabs/linctl.git
 cd linctl
 make deps        # Install dependencies
 make build       # Build the binary
@@ -52,7 +53,7 @@ linctl docs      # Render the README.md
 
 ### For Development
 ```bash
-git clone https://github.com/dorkitude/linctl.git
+git clone https://github.com/raegislabs/linctl.git
 cd linctl
 make deps        # Install dependencies
 go run main.go   # Run directly without building
@@ -127,6 +128,8 @@ linctl issue get LIN-123
 
 # Create a new issue
 linctl issue create --title "Bug fix" --team ENG
+# Create with labels
+linctl issue create --title "Feature" --team ENG --label "backend,api"
 
 # Assign issue to yourself
 linctl issue assign LIN-123
@@ -144,6 +147,13 @@ linctl issue update LIN-123 --due-date ""  # Remove due date
 
 # Update multiple fields at once
 linctl issue update LIN-123 --title "Critical Bug" --assignee me --priority 1
+
+# Label management
+linctl issue update LIN-123 --label "bug,urgent"           # Set labels exactly
+linctl issue update LIN-123 --label ""                      # Clear all labels
+linctl issue update LIN-123 --add-label "backend"           # Incremental add
+linctl issue update LIN-123 --remove-label "frontend"       # Incremental remove
+# Precedence: if --label is provided, add/remove are ignored
 ```
 
 ### 3. Project Management
@@ -162,6 +172,31 @@ linctl project list --newer-than all_time
 
 # Get project details (use ID from list command)
 linctl project get 65a77a62-ec5e-491e-b1d9-84aebee01b33
+
+# Create a new project
+linctl project create --name "Q1 Backend" --team RAE --state started --priority 2
+
+# Update project fields (multi-field support)
+linctl project update PROJECT-UUID --name "New Name" --state started --priority 1
+linctl project update PROJECT-UUID --description "Updated description"
+
+# Archive a project
+linctl project archive PROJECT-UUID
+```
+
+## 📢 Project Updates (NEW)
+```bash
+# Create project update posts for progress tracking
+linctl project update-post create PROJECT-UUID --body "Weekly progress update..."
+linctl project update-post create PROJECT-UUID --body "Milestone completed" --health "onTrack"
+
+# List all project updates
+linctl project update-post list PROJECT-UUID
+
+# Get specific update details
+linctl project update-post get PROJECT-UUID UPDATE-ID
+
+# Health status options: onTrack, atRisk, offTrack
 ```
 
 ### 4. Team Management
@@ -244,8 +279,10 @@ linctl issue new [flags]      # Alias
   --title string           Issue title (required)
   -d, --description string Issue description
   -t, --team string        Team key (required)
-  --priority int       Priority 0-4 (default 3)
+  --priority int           Priority 0-4 (default 3)
   -m, --assign-me          Assign to yourself
+  --project string         Project UUID (or 'unassigned')
+  --label string           Comma-separated label names or IDs (e.g., "bug,urgent")
 
 # Assign issue to yourself
 linctl issue assign <issue-id>
@@ -260,6 +297,12 @@ linctl issue edit <issue-id> [flags]    # Alias
   -s, --state string       State name (e.g., 'Todo', 'In Progress', 'Done')
   --priority int           Priority (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)
   --due-date string        Due date (YYYY-MM-DD format, or empty to remove)
+  --project string         Project UUID (or 'unassigned')
+  --label string           Set labels (comma-separated names/IDs, or "" to clear all)
+  --add-label string       Add labels incrementally (comma-separated)
+  --remove-label string    Remove labels incrementally (comma-separated)
+
+# Label Precedence: If --label is provided, --add-label and --remove-label are ignored
 
 # Archive issue (coming soon)
 linctl issue archive <issue-id>
@@ -308,6 +351,39 @@ linctl project show <project-id>  # Alias
 
 # Create project (coming soon)
 linctl project create [flags]
+```
+
+### Milestone Management (NEW)
+```bash
+# List all milestones for a project
+linctl milestone list PROJECT-UUID
+
+# Create a new milestone
+linctl milestone create PROJECT-UUID --name "Phase 1 Complete" --target-date "2025-12-31"
+
+# Get milestone details
+linctl milestone get PROJECT-UUID MILESTONE-ID
+
+# Update milestone fields
+linctl milestone update PROJECT-UUID MILESTONE-ID --name "Updated Name" --target-date "2025-12-31"
+
+# Delete a milestone
+linctl milestone delete PROJECT-UUID MILESTONE-ID
+```
+
+### Project Update Commands (NEW)
+```bash
+# Create project update post
+linctl project update-post create PROJECT-UUID --body "Progress update..."
+linctl project update-post create PROJECT-UUID --body "Milestone completed" --health "onTrack"
+
+# List all project updates
+linctl project update-post list PROJECT-UUID
+
+# Get specific update details  
+linctl project update-post get PROJECT-UUID UPDATE-ID
+
+# Available health statuses: onTrack, atRisk, offTrack
 ```
 
 ### User Commands
@@ -608,6 +684,9 @@ echo "All time: $(linctl issue list --newer-than all_time --json | jq '. | lengt
 # Create and assign issue in one command
 linctl issue create --title "Fix bug" --team ENG --assign-me --json
 
+# Create issue with labels and project assignment
+linctl issue create --title "API bug" --team ENG --label "bug,backend,urgent" --project PROJECT-UUID --json
+
 # Get all projects for a team
 linctl project list --team ENG --json | jq '.[] | {name, progress}'
 
@@ -619,6 +698,13 @@ linctl team members ENG --json | jq '. | length'
 
 # Export issue comments
 linctl comment list LIN-123 --json > issue-comments.json
+
+# Enhanced search with project context
+linctl issue search "authentication" --project PROJECT-UUID --team ENG --json
+
+# Project update workflow
+project_id="61829105-0c68-43c0-8422-1cb09950cd29"
+linctl project update-post create $project_id --body "Weekly progress: Completed API integration, starting UI development next week" --health "onTrack"
 ```
 
 ## 📡 Real-World Examples
@@ -665,6 +751,32 @@ for issue in LIN-123 LIN-124 LIN-125; do
 done
 ```
 
+### Label Management
+```bash
+# Set labels (replaces all existing labels)
+linctl issue update LIN-123 --label "bug,urgent,backend"
+
+# Add labels incrementally
+linctl issue update LIN-123 --add-label "frontend,api"
+
+# Remove specific labels
+linctl issue update LIN-123 --remove-label "urgent"
+
+# Clear all labels
+linctl issue update LIN-123 --label ""
+
+# Create issues with labels
+linctl issue create --title "API Bug" --team ENG --label "bug,backend,urgent"
+
+# Label Precedence: If --label is provided, --add-label and --remove-label are ignored
+```
+
+### 🏷️ Advanced Label Features
+- **Fuzzy Matching**: Intelligent suggestions for misspelled labels
+- **Validation**: Automatic label name-to-ID resolution
+- **Deduplication**: Duplicate labels automatically removed
+- **Error Handling**: Clear suggestions when labels not found
+
 ### Project Tracking
 ```bash
 # List projects nearing completion (>80% progress)
@@ -691,6 +803,30 @@ for issue in $(linctl issue list --assignee me --json | jq -r '.[].identifier');
 done
 ```
 
+### Project Management Workflows
+```bash
+# Complete project lifecycle
+linctl project create --name "Q1 Features" --team ENG --state started --priority 2
+linctl project update PROJECT-UUID --description "Q1 2025 feature delivery"
+
+# Milestone tracking
+linctl milestone create PROJECT-UUID --name "API Integration" --target-date "2025-12-15"
+linctl milestone update PROJECT-UUID MILESTONE-ID --name "API Integration Complete"
+
+# Progress reporting with health tracking
+linctl project update-post create PROJECT-UUID --body "Backend API 80% complete, frontend starting next week" --health "onTrack"
+linctl project update-post create PROJECT-UUID --body "Blocked by external API dependency" --health "atRisk"
+
+# Issue-to-project assignment workflow
+for issue in LIN-123 LIN-124 LIN-125; do
+  linctl issue update $issue --project PROJECT-UUID
+done
+
+# Project analytics and reporting
+linctl project list --team ENG --json | jq '.[] | select(.progress > 0.8) | {name, progress}'
+linctl project update-post list PROJECT-UUID --json | jq '.[] | {body, health, created}'
+```
+
 ## 🐛 Troubleshooting
 
 ### Authentication Issues
@@ -711,6 +847,8 @@ Linear has the following rate limits:
 - `Not authenticated`: Run `linctl auth` first
 - `Team not found`: Use team key (e.g., "ENG") not display name
 - `Invalid priority`: Use numbers 0-4 (0=None, 1=Urgent, 2=High, 3=Normal, 4=Low)
+- `Label not found`: Check label name spelling; linctl will suggest closest matches
+  - Solution: Use exact label name or ID provided in suggestions
 
 ### Time Filtering Issues
 - **Missing old issues?** Remember that list commands default to showing only the last 6 months
@@ -737,9 +875,47 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 🔗 Links
 
 - [Linear API Documentation](https://developers.linear.app/)
-- [GitHub Repository](https://github.com/dorkitude/linctl)
-- [Issue Tracker](https://github.com/dorkitude/linctl/issues)
+- [GitHub Repository](https://github.com/raegislabs/linctl)
+- [Issue Tracker](https://github.com/raegislabs/linctl/issues)
 
 ---
 
 **Built with ❤️ using Go, Cobra, and the Linear API**
+
+## 📚 Built-in Documentation
+- Access full documentation with `linctl docs`
+- Comprehensive command reference available with `--help` flags
+- Real-world examples and scripting patterns included
+
+## 🎨 Advanced Features
+
+### 🔍 Enhanced Search (NEW)
+```bash
+# Full-text search using Linear's search API
+linctl issue search "login bug" --team ENG
+linctl issue search "customer:" --include-completed --include-archived
+linctl issue search "API authentication" --assignee me --newer-than 2_weeks_ago
+
+# Search supports all standard filters:
+linctl issue search "query" [flags]
+# -t, --team string        Filter by team key
+# -a, --assignee string     Filter by assignee (email or 'me')  
+# -s, --state string       Filter by state name
+# -l, --limit int          Maximum results (default 50)
+# -c, --include-completed   Include completed and canceled issues
+```
+
+### 🏷️ Smart Label Management (NEW)
+```bash
+# Intelligent label operations with fuzzy matching
+linctl issue update LIN-123 --label "bug,urgnet"  # Typo automatically suggested
+# → Error: Label "urgnet" not found. Did you mean "urgent"?
+
+# Bulk label operations
+for issue in $(linctl issue list --team ENG --json | jq -r '.[].identifier'); do
+  linctl issue update $issue --add-label "needs-review"
+done
+
+# Label analytics
+linctl issue list --json | jq '[.[] | .labels[] | .name] | group_by(.) | map({label: .[0], count: length})'
+```

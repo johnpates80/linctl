@@ -1,9 +1,9 @@
 package main
 
 import (
-	_ "embed"
+    _ "embed"
 
-	"github.com/dorkitude/linctl/cmd"
+    "github.com/raegislabs/linctl/cmd"
 )
 
 //go:embed README.md
