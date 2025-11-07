@@ -2,7 +2,7 @@
 
 **Epic:** Epic 2 - Issue Filtering & Search Enhancements
 **Priority:** P2
-**Status:** review
+**Status:** done
 **Estimated Hours:** 3
 **Dependencies:** 2-1 (filters), 2-2 (labels in outputs)
 
@@ -41,4 +41,3 @@ So that I can express precise queries directly from the CLI.
 - [x] All ACs satisfied and smoke verified on live project where feasible.
 - [x] No regressions; build passes.
 - [x] Documentation updated.
-

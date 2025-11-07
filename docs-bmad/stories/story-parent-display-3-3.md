@@ -2,7 +2,7 @@
 
 **Epic:** Epic 3 - Parent Issue Linking
 **Priority:** P3
-**Status:** drafted
+**Status:** done
 **Estimated Hours:** 1
 **Dependencies:** 3-1 (parent flags)
 
@@ -25,4 +25,3 @@ As a linctl user scanning issue lists, I want to see the parent issue identifier
 
 ## Definition of Done
 - [ ] All ACs pass; build/tests pass; docs updated.
-

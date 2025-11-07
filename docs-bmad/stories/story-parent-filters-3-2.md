@@ -2,7 +2,7 @@
 
 **Epic:** Epic 3 - Parent Issue Linking
 **Priority:** P2
-**Status:** drafted
+**Status:** done
 **Estimated Hours:** 2
 **Dependencies:** 3-1 (parent flags)
 
@@ -27,4 +27,3 @@ As a linctl user, I want to filter issues by parent relationships, so I can focu
 
 ## Definition of Done
 - [ ] All ACs pass; build/tests pass.
-

@@ -42,9 +42,9 @@ development_status:
   epic-1-retrospective: optional
   epic-2: backlog
   2-1-issue-list-filters: review
-  2-2-issue-list-labels: review
-  2-3-label-operators: review
-  epic-3: backlog
-  3-1-parent-flags: in-progress
-  3-2-parent-filters: backlog
-  3-3-parent-display: backlog
+  2-2-issue-list-labels: done
+  2-3-label-operators: done
+  epic-3: contexted
+  3-1-parent-flags: done
+  3-2-parent-filters: done
+  3-3-parent-display: done

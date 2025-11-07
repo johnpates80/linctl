@@ -2,7 +2,7 @@
 
 **Epic:** Epic 3 - Parent Issue Linking
 **Priority:** P2
-**Status:** drafted
+**Status:** done
 **Estimated Hours:** 2
 **Dependencies:** None
 
@@ -10,10 +10,10 @@
 As a linctl user, I want to set or remove a parent issue on creation and update so I can manage sub-issue hierarchies from the CLI.
 
 ## Acceptance Criteria
-- [ ] AC-1: `linctl issue create --title "..." --team ENG --parent PARENT-ID` creates a sub-issue under the specified parent (by issue ID, e.g., `RAE-123`).
-- [ ] AC-2: `linctl issue update ISS-123 --parent PARENT-ID` sets the issue's parent.
-- [ ] AC-3: `linctl issue update ISS-123 --parent unassigned` removes the parent (issue becomes a top-level issue).
-- [ ] AC-4: Invalid parent (not found) returns a clear error: `Parent issue 'X' not found`.
+- [x] AC-1: `linctl issue create --title "..." --team ENG --parent PARENT-ID` creates a sub-issue under the specified parent (by issue ID, e.g., `RAE-123`).
+- [x] AC-2: `linctl issue update ISS-123 --parent PARENT-ID` sets the issue's parent.
+- [x] AC-3: `linctl issue update ISS-123 --parent unassigned` removes the parent (issue becomes a top-level issue).
+- [x] AC-4: Invalid parent (not found) returns a clear error: `Parent issue 'X' not found`.
 
 ## Technical Notes
 - On create/update, resolve `PARENT-ID` (identifier like `RAE-123`) to the underlying GraphQL node ID via `GetIssue` call.
@@ -30,4 +30,3 @@ As a linctl user, I want to set or remove a parent issue on creation and update 
 ## Definition of Done
 - [ ] All ACs pass with manual tests.
 - [ ] Build/tests pass; docs updated.
-
