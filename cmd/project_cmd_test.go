@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dorkitude/linctl/pkg/api"
+"github.com/raegislabs/linctl/pkg/api"
 	"github.com/spf13/viper"
 )
 
