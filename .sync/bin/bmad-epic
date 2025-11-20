@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""
+BMAD Epic Management CLI
+
+Commands:
+  discover    - Discover all BMAD epics
+  preview     - Preview epic creation in Linear
+  create      - Create epics in Linear
+  status      - Show epic creation status
+"""
+
+import sys
+import json
+import argparse
+from pathlib import Path
+from typing import List, Dict, Any
+
+# Add lib to path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'lib'))
+
+from epic_creation import EpicCreationManager, EpicContent, discover_all_epics
+from epic_numbering import get_numbering_system
+from hierarchy import get_hierarchy_manager
+from metadata import get_metadata_manager
+from config_loader import load_config
+from logger import get_logger
+
+
+class EpicCLI:
+    """Epic management CLI interface."""
+
+    def __init__(self):
+        self.bmad_root = Path.cwd()
+        self.config = self._load_config()
+        self.logger = get_logger()
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load sync configuration."""
+        try:
+            config = load_config()
+            return config
+        except Exception as e:
+            print(f"⚠️  Failed to load config: {e}")
+            print("Using defaults...")
+            return {
+                'project': {'bmad_root': str(Path.cwd())},
+                'linear': {'team_prefix': 'RAE', 'team_name': 'RAE'},
+                'numbering': {'epic_base': 360, 'epic_block_size': 20}
+            }
+
+    def discover(self, args) -> int:
+        """Discover all BMAD epics."""
+        print("🔍 Discovering BMAD epics...")
+        print()
+
+        try:
+            epics = discover_all_epics(self.bmad_root)
+
+            if not epics:
+                print("❌ No epics found")
+                return 1
+
+            print(f"✅ Found {len(epics)} epic(s):\n")
+
+            for epic in epics:
+                print(f"📦 Epic {epic.epic_number}: {epic.title}")
+                print(f"   Source: {epic.source_file.name}")
+                print(f"   Stories: {len(epic.stories)}")
+                if epic.stories[:3]:  # Show first 3
+                    for story in epic.stories[:3]:
+                        print(f"     - {story}")
+                    if len(epic.stories) > 3:
+                        print(f"     ... and {len(epic.stories) - 3} more")
+                print()
+
+            return 0
+
+        except Exception as e:
+            print(f"❌ Discovery failed: {e}")
+            return 1
+
+    def preview(self, args) -> int:
+        """Preview epic creation."""
+        print("👁️  Previewing epic creation in Linear...")
+        print()
+
+        try:
+            manager = EpicCreationManager(self.bmad_root)
+            numbering = get_numbering_system()
+            team = self.config['linear']['team_name']
+
+            # Discover epics
+            epics = manager.discover_epics()
+
+            if not epics:
+                print("❌ No epics found to preview")
+                return 1
+
+            # Filter by epic number if specified
+            if args.epic:
+                epics = [e for e in epics if e.epic_number in args.epic]
+
+            if not epics:
+                print(f"❌ No epics found matching: {args.epic}")
+                return 1
+
+            print(f"📋 Preview for {len(epics)} epic(s):\n")
+
+            total_reserved_numbers = 0
+
+            for epic in epics:
+                preview = manager.get_epic_creation_preview(epic, team)
+
+                print(f"{'=' * 60}")
+                print(f"Epic {preview['epic_number']}: {epic.title}")
+                print(f"{'=' * 60}")
+                print()
+                print(f"📍 Issue Range: {preview['estimated_issue_range']}")
+                print(f"📁 Source File: {preview['source_file']}")
+                print(f"📊 Stories: {preview['story_count']}")
+                print()
+                print(f"📝 Title:")
+                print(f"   {preview['title']}")
+                print()
+                print(f"📄 Description Preview:")
+                print(f"   {preview['description_preview']}")
+                print()
+
+                if preview['stories']:
+                    print(f"🔗 Associated Stories:")
+                    for story in preview['stories'][:5]:
+                        print(f"   - {story}")
+                    if len(preview['stories']) > 5:
+                        print(f"   ... and {len(preview['stories']) - 5} more")
+                    print()
+
+                # Calculate number range
+                epic_range = numbering.calculate_epic_range(epic.epic_number)
+                total_reserved_numbers += epic_range.reserved_count
+
+            print(f"{'=' * 60}")
+            print(f"📊 Summary")
+            print(f"{'=' * 60}")
+            print(f"Epics to create: {len(epics)}")
+            print(f"Total issue numbers reserved: {total_reserved_numbers}")
+            print(f"Team: {team}")
+            print()
+            print("💡 Use 'bmad-epic create' to create these epics in Linear")
+
+            return 0
+
+        except Exception as e:
+            print(f"❌ Preview failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return 1
+
+    def create(self, args) -> int:
+        """Create epics in Linear."""
+        print("🚀 Creating epics in Linear...")
+        print()
+
+        try:
+            manager = EpicCreationManager(self.bmad_root)
+            hierarchy_mgr = get_hierarchy_manager()
+            metadata_mgr = get_metadata_manager(self.config['linear']['team_name'])
+
+            team = self.config['linear']['team_name']
+            project_id = self.config['linear'].get('project_id')
+
+            # Discover epics
+            epics = manager.discover_epics()
+
+            if not epics:
+                print("❌ No epics found to create")
+                return 1
+
+            # Filter by epic number if specified
+            if args.epic:
+                epics = [e for e in epics if e.epic_number in args.epic]
+
+            if not epics:
+                print(f"❌ No epics found matching: {args.epic}")
+                return 1
+
+            # Confirmation (unless --yes flag)
+            if not args.yes:
+                print(f"⚠️  About to create {len(epics)} epic(s) in Linear (team: {team})")
+                print()
+                for epic in epics:
+                    epic_range = manager.numbering.calculate_epic_range(epic.epic_number)
+                    print(f"   - Epic {epic.epic_number}: {epic.title}")
+                    print(f"     Range: RAE-{epic_range.range_start} to RAE-{epic_range.range_end}")
+                print()
+                response = input("Continue? (yes/no): ").strip().lower()
+                if response != 'yes':
+                    print("❌ Cancelled")
+                    return 1
+                print()
+
+            # Create epics
+            results = []
+            for epic in epics:
+                print(f"Creating Epic {epic.epic_number}: {epic.title}...")
+
+                try:
+                    result = manager.create_epic_in_linear(epic, team, project_id)
+
+                    if result['success']:
+                        print(f"  ✅ Created: {result['issue_key']} (UUID: {result['linear_uuid']})")
+
+                        # Register in hierarchy
+                        hierarchy_mgr.register_epic(
+                            f"epic-{epic.epic_number}",
+                            result['issue_key']
+                        )
+
+                        # Apply metadata
+                        metadata_mgr.apply_epic_metadata(
+                            result['issue_key'],
+                            epic.epic_number,
+                            project_id
+                        )
+
+                        results.append(result)
+                    else:
+                        print(f"  ❌ Failed: {result.get('error', 'Unknown error')}")
+
+                except Exception as e:
+                    print(f"  ❌ Error: {e}")
+
+                print()
+
+            # Summary
+            print(f"{'=' * 60}")
+            print(f"✅ Created {len(results)} of {len(epics)} epics")
+            print(f"{'=' * 60}")
+
+            for result in results:
+                print(f"  {result['issue_key']}: Epic {result['epic_number']}")
+
+            return 0 if len(results) == len(epics) else 1
+
+        except Exception as e:
+            print(f"❌ Creation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return 1
+
+    def status(self, args) -> int:
+        """Show epic creation status."""
+        print("📊 Epic Creation Status")
+        print()
+
+        try:
+            numbering = get_numbering_system()
+            hierarchy_mgr = get_hierarchy_manager()
+
+            # Numbering stats
+            num_stats = numbering.get_registry_stats()
+            print(f"📦 Number Registry:")
+            print(f"   Epics registered: {num_stats['epic_count']}")
+            print(f"   Total reserved numbers: {num_stats['total_reserved_numbers']}")
+            print(f"   Epic base: {num_stats['epic_base']}")
+            print(f"   Block size: {num_stats['block_size']}")
+            print()
+
+            # List registered epics
+            ranges = numbering.list_all_ranges()
+            if ranges:
+                print(f"📋 Registered Epic Ranges:")
+                for epic_range in ranges:
+                    print(f"   Epic {epic_range.epic_number}: RAE-{epic_range.range_start} to RAE-{epic_range.range_end}")
+                print()
+
+            # Hierarchy stats
+            hier_stats = hierarchy_mgr.get_hierarchy_stats()
+            print(f"🔗 Hierarchy:")
+            print(f"   Epics in Linear: {hier_stats['epic_count']}")
+            print(f"   Stories in Linear: {hier_stats['story_count']}")
+            print(f"   Linked stories: {hier_stats['linked_story_count']}")
+            print(f"   Unlinked stories: {hier_stats['unlinked_story_count']}")
+
+            return 0
+
+        except Exception as e:
+            print(f"❌ Status check failed: {e}")
+            return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="BMAD Epic Management CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # Discover command
+    parser_discover = subparsers.add_parser('discover', help='Discover all BMAD epics')
+
+    # Preview command
+    parser_preview = subparsers.add_parser('preview', help='Preview epic creation')
+    parser_preview.add_argument(
+        '--epic', '-e',
+        type=int,
+        nargs='+',
+        help='Epic numbers to preview (default: all)'
+    )
+
+    # Create command
+    parser_create = subparsers.add_parser('create', help='Create epics in Linear')
+    parser_create.add_argument(
+        '--epic', '-e',
+        type=int,
+        nargs='+',
+        help='Epic numbers to create (default: all)'
+    )
+    parser_create.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Skip confirmation prompt'
+    )
+
+    # Status command
+    parser_status = subparsers.add_parser('status', help='Show epic creation status')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    cli = EpicCLI()
+
+    commands = {
+        'discover': cli.discover,
+        'preview': cli.preview,
+        'create': cli.create,
+        'status': cli.status,
+    }
+
+    if args.command in commands:
+        return commands[args.command](args)
+    else:
+        parser.print_help()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

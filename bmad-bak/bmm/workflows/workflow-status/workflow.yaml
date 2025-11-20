@@ -1,0 +1,27 @@
+name: "Workflow Status Checker"
+description: "Lightweight status checker - answers 'what should I do now?' for any agent. Reads YAML status file for workflow tracking."
+
+# Template configuration
+template: false
+default_output_file: "docs-bmad/bmm-workflow-status.yaml"
+
+# Configuration source
+config_source: "docs-bmad/bmm-workflow-status.yaml"
+
+# Instructions for workflow execution
+instructions:
+  - step n="1" goal="Load current workflow status"
+    action: Read the workflow status file from config_source to understand current project state
+
+  - step n="2" goal="Analyze completion status"
+    action: Review all workflow phases, epics, and stories to determine what's completed vs pending
+
+  - step n="3" goal="Identify next actions"
+    action: Based on current status, provide clear guidance on what should be done next
+
+  - step n="4" goal="Update status if needed"
+    action: If any statuses have changed, update the workflow status file accordingly
+    optional: true
+
+# Validation checklist
+checklist: "bmad/bmm/workflows/workflow-status/checklist.md"

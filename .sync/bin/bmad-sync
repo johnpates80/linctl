@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""
+BMAD Sync CLI
+
+Usage:
+  bmad-sync sync [--dry-run] [--force] [--verbose]
+  bmad-sync state convert [--from-bmad STATE | --from-linear STATE] [--content-type {story,epic}] [--has-context-file] [--show-mappings]
+  bmad-sync state validate [--from STATE --to STATE | --content KEY | --show-all] [--content-type {story,epic}]
+  bmad-sync state history [KEY] [--recent 24h] [--export PATH]
+  bmad-sync dashboard [--detailed] [--watch] [--interval SECONDS]
+  bmad-sync trends [--days N]
+  bmad-sync performance [--days N]
+  bmad-sync export {dashboard,history,metrics,full} OUTPUT [--format {json,markdown,csv}] [--days N]
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
+
+from sync_engine import SyncEngine  # type: ignore
+from logger import get_logger  # type: ignore
+from state_mapper import get_state_mapper  # type: ignore
+from state_manager import StateManager  # type: ignore
+from preview import generate_preview  # type: ignore
+from selective_sync import SelectiveSync, SelectionFilter  # type: ignore
+from dry_run import simulate_dry_run  # type: ignore
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog='bmad-sync')
+    sub = parser.add_subparsers(dest='cmd', required=True)
+
+    sync = sub.add_parser('sync', help='Discover and synchronize BMAD content to Linear')
+    sync.add_argument('--dry-run', action='store_true', help='Plan only (no changes applied)')
+    sync.add_argument('--force', action='store_true', help='Ignore previous index when scanning')
+    sync.add_argument('--verbose', action='store_true', help='Verbose logging')
+    sync.add_argument('--preview', action='store_true', help='Show detailed preview of changes')
+    sync.add_argument('--detailed', action='store_true', help='Include detailed diffs in preview')
+    sync.add_argument('--selective', action='store_true', help='Interactive selection of operations')
+    sync.add_argument('--dry-run-report', action='store_true', help='Generate detailed dry-run simulation report')
+    sync.add_argument('--filter-epic', dest='filter_epic', help='Filter by epic (e.g., "1" or "epic-1")')
+    sync.add_argument('--filter-type', dest='filter_type', choices=['story', 'epic', 'sprint-status'], help='Filter by content type')
+    sync.add_argument('--filter-action', dest='filter_action', choices=['create', 'update'], help='Filter by action')
+    sync.add_argument('--create-only', action='store_true', help='Only create missing issues (skip existing)')
+    sync.add_argument('--update-only', action='store_true', help='Only update existing issues (skip new)')
+
+    # state subcommands
+    st = sub.add_parser('state', help='State mapping, validation and history')
+    st_sub = st.add_subparsers(dest='state_cmd', required=True)
+
+    st_convert = st_sub.add_parser('convert', help='Convert between BMAD and Linear states')
+    g = st_convert.add_mutually_exclusive_group(required=True)
+    g.add_argument('--from-bmad', dest='from_bmad', help='BMAD state (e.g., in-progress)')
+    g.add_argument('--from-linear', dest='from_linear', help='Linear state (e.g., "In Progress")')
+    st_convert.add_argument('--content-type', choices=['story', 'epic'], default='story')
+    st_convert.add_argument('--has-context-file', action='store_true', help='Context hint for Todo disambiguation')
+    st_convert.add_argument('--show-mappings', action='store_true', help='Print mapping tables from configuration')
+
+    st_validate = st_sub.add_parser('validate', help='Validate state transitions or inspect content state')
+    st_validate.add_argument('--from', dest='from_state', help='From state (BMAD)')
+    st_validate.add_argument('--to', dest='to_state', help='To state (BMAD)')
+    st_validate.add_argument('--content', dest='content_key', help='Content key to inspect (e.g., 1-1-project-setup-and-infrastructure)')
+    st_validate.add_argument('--show-all', action='store_true', help='Show valid transitions from configuration')
+    st_validate.add_argument('--content-type', choices=['story', 'epic'], default='story')
+
+    st_history = st_sub.add_parser('history', help='Show or export state change history')
+    st_history.add_argument('key', nargs='?', help='Content key (e.g., 1-1-project-setup-and-infrastructure)')
+    st_history.add_argument('--recent', help='Window for recent changes (e.g., 24h, 7d)')
+    st_history.add_argument('--export', dest='export_path', help='Export history JSON to file')
+
+    # top-level validators and tools
+    sub.add_parser('validate', help='Run structural validations (sprint-status, stories)')
+    sub.add_parser('health', help='Compute system health (validations, state files, linctl)')
+
+    rollback_parser = sub.add_parser('rollback', help='Rollback last sync (restore from latest pre-sync backup)')
+    rollback_parser.add_argument('--preview', action='store_true', help='Preview rollback without executing')
+
+    sub.add_parser('errors', help='Show recent sync errors')
+
+    # dashboard and reporting
+    dashboard = sub.add_parser('dashboard', help='Display real-time sync status dashboard')
+    dashboard.add_argument('--detailed', action='store_true', help='Show detailed diagnostics')
+    dashboard.add_argument('--watch', action='store_true', help='Watch mode (auto-refresh)')
+    dashboard.add_argument('--interval', type=int, default=5, help='Refresh interval for watch mode (seconds)')
+
+    trends = sub.add_parser('trends', help='Show sync trends and historical analysis')
+    trends.add_argument('--days', type=int, default=30, help='Number of days to analyze')
+
+    performance = sub.add_parser('performance', help='Show performance metrics report')
+    performance.add_argument('--days', type=int, default=7, help='Number of days to analyze')
+
+    export = sub.add_parser('export', help='Export reports in various formats')
+    export.add_argument('type', choices=['dashboard', 'history', 'metrics', 'full'], help='Report type')
+    export.add_argument('output', help='Output file path')
+    export.add_argument('--format', choices=['json', 'markdown', 'csv'], default='json', help='Export format')
+    export.add_argument('--days', type=int, default=7, help='Number of days for historical data')
+
+    args = parser.parse_args()
+    logger = get_logger()
+
+    if args.cmd == 'sync':
+        engine = SyncEngine(
+            dry_run=args.dry_run,
+            create_only=args.create_only,
+            update_only=args.update_only
+        )
+        plan = engine.sync(force_refresh=args.force)
+
+        ops = plan['operations']
+        total = len(ops)
+
+        # Apply filters if specified
+        if args.filter_epic or args.filter_type or args.filter_action:
+            selector = SelectiveSync(ops)
+            filter_criteria = SelectionFilter(
+                epic=args.filter_epic,
+                content_type=args.filter_type,
+                action=args.filter_action
+            )
+            selector.deselect_all()
+            selector.select_by_filter(filter_criteria)
+            ops = selector.get_selected_operations()
+            print(f"Filter applied: {len(ops)}/{total} operations selected")
+
+        # Interactive selection if requested
+        if args.selective:
+            selector = SelectiveSync(ops)
+            ops = selector.interactive_selection(colored=True)
+            if not ops:
+                print("No operations selected. Exiting.")
+                return 0
+
+        # Show dry-run report if requested
+        if args.dry_run and args.dry_run_report:
+            dry_run_output = simulate_dry_run(ops, format="text")
+            print(dry_run_output)
+        # Show preview if requested
+        elif args.preview or args.detailed:
+            preview_output = generate_preview(
+                ops,
+                previous_index=plan.get('previous_index'),
+                current_index=plan.get('current_index'),
+                colored=True,
+                detailed=args.detailed
+            )
+            print(preview_output)
+        else:
+            print(f"Planned operations: {len(ops)} (create={sum(1 for o in ops if o.action == 'create')}, update={sum(1 for o in ops if o.action == 'update')})")
+            print(f"Report: {plan['report']}")
+
+        # Detect conflicts using last_sync if available
+        conflicts = engine.detect_and_record_conflicts(engine.discovery.discover_all(previous_index=None))
+        if conflicts:
+            print(f"Conflicts detected: {len(conflicts)} (details saved to .sync/conflicts/pending.json)")
+
+        # Apply if not dry-run
+        failed = 0
+        if not args.dry_run and ops:
+            # Progress output
+            success, failed, messages = engine.apply(ops)
+            print(f"Applied operations: success={success}, failed={failed}")
+            for m in messages:
+                print(f"- {m}")
+
+        # Exit codes: 0 success, 1 errors, 2 conflicts
+        if failed > 0:
+            return 1
+        if conflicts:
+            return 2
+        return 0
+
+    if args.cmd == 'state':
+        mapper = get_state_mapper()
+        # Convert subcommand
+        if args.state_cmd == 'convert':
+            if args.show_mappings:
+                cfg = mapper.config
+                print(json.dumps({
+                    'story_states': cfg.get('story_states'),
+                    'epic_states': cfg.get('epic_states')
+                }, indent=2))
+            if args.from_bmad:
+                out = mapper.bmad_to_linear(args.from_bmad, content_type=args.content_type)
+                print(out)
+                return 0
+            if args.from_linear:
+                hints = {'has_context_file': bool(args.has_context_file)}
+                out = mapper.linear_to_bmad(args.from_linear, content_type=args.content_type, context_hints=hints)
+                print(out)
+                return 0
+
+        # Validate subcommand
+        if args.state_cmd == 'validate':
+            if args.show_all:
+                vt = mapper.config.get('valid_transitions', {})
+                print(json.dumps(vt, indent=2))
+                return 0
+            if args.content_key and not (args.from_state and args.to_state):
+                # Inspect content current BMAD status from content index
+                sm = StateManager()
+                try:
+                    index = sm.get_content_index()
+                except Exception:
+                    index = {}
+                stories = (index or {}).get('stories', {})
+                meta = stories.get(args.content_key)
+                if not meta:
+                    print(f"content not found: {args.content_key}", file=sys.stderr)
+                    return 1
+                status = meta.get('status') or ''
+                print(status)
+                return 0
+            if args.from_state and args.to_state:
+                ok, err = mapper.validate_transition(args.from_state, args.to_state, content_type=args.content_type)
+                if ok:
+                    print("valid")
+                    return 0
+                else:
+                    print(err)
+                    return 2
+            print("usage: provide --from and --to or --content or --show-all", file=sys.stderr)
+            return 2
+
+        # History subcommand
+        if args.state_cmd == 'history':
+            def parse_window(s: str) -> int:
+                if s.endswith('h'):
+                    return int(s[:-1])
+                if s.endswith('d'):
+                    return int(s[:-1]) * 24
+                return int(s)
+
+            if args.key:
+                hist = mapper.get_state_history(args.key)
+            elif args.recent:
+                hours = parse_window(args.recent)
+                hist = mapper.get_recent_changes(hours=hours)
+            else:
+                # default: recent 24h
+                hist = mapper.get_recent_changes(hours=24)
+
+            if args.export_path:
+                Path(args.export_path).write_text(json.dumps(hist, indent=2), encoding='utf-8')
+                print(args.export_path)
+                return 0
+            print(json.dumps(hist, indent=2))
+            return 0
+
+    # ---------- VALIDATE ----------
+    if args.cmd == 'validate':
+        from validator import validate_all  # type: ignore
+        rep = validate_all()
+        # Friendly summary
+        try:
+            epic_errs = sum(len(v.get('errors', [])) for v in rep.get('epics', {}).values())
+            story_errs = sum(len(v.get('errors', [])) for v in rep.get('stories', {}).values())
+            if rep.get('ok'):
+                print("✅ Validation passed: epics and stories structurally sound", file=sys.stderr)
+            else:
+                print("❌ Validation issues detected", file=sys.stderr)
+                if epic_errs:
+                    print(f"  - Epic issues: {epic_errs}", file=sys.stderr)
+                if story_errs:
+                    print(f"  - Story issues: {story_errs}", file=sys.stderr)
+                print("Next steps:", file=sys.stderr)
+                print("  • Open the listed files and address missing sections/fields", file=sys.stderr)
+                print("  • Re-run: bmad-sync validate", file=sys.stderr)
+        except Exception:
+            pass
+        # Machine-readable
+        print(json.dumps(rep, indent=2))
+        return 0 if rep.get('ok') else 2
+
+    # ---------- HEALTH ----------
+    if args.cmd == 'health':
+        from health import compute_health  # type: ignore
+        rep = compute_health()
+        # Friendly summary
+        try:
+            status = rep.get('status')
+            score = rep.get('score')
+            print(f"System Health: {status} ({score}/100)", file=sys.stderr)
+            v_ok = rep.get('diagnostics', {}).get('validation', {}).get('ok', False)
+            sf_ok = rep.get('diagnostics', {}).get('state_files_ok')
+            perm_ok = rep.get('diagnostics', {}).get('state_permissions_ok')
+            l = rep.get('diagnostics', {}).get('linctl', {})
+            if not v_ok:
+                print("  • Validation: issues found (run: bmad-sync validate)", file=sys.stderr)
+            if not sf_ok:
+                print("  • State files: missing/corrupt (check .sync/state/*.json)", file=sys.stderr)
+            if not perm_ok:
+                mode = rep.get('diagnostics', {}).get('state_dir_mode')
+                print(f"  • Permissions: .sync/state too open (mode {mode}); recommend 0700", file=sys.stderr)
+            if not l.get('installed'):
+                print("  • linctl: not installed (brew tap dorkitude/linctl && brew install linctl)", file=sys.stderr)
+            elif not l.get('authenticated'):
+                print("  • linctl: not authenticated (set LINEAR_API_KEY or run 'linctl auth')", file=sys.stderr)
+        except Exception:
+            pass
+        # Machine-readable
+        print(json.dumps(rep, indent=2))
+        return 0 if rep.get('status') == 'OK' else 2
+
+    # ---------- ROLLBACK ----------
+    if args.cmd == 'rollback':
+        from rollback import rollback_last, preview_rollback, render_rollback_preview  # type: ignore
+
+        # Preview mode
+        if args.preview:
+            preview = preview_rollback()
+            preview_text = render_rollback_preview(preview)
+            print(preview_text)
+            return 0 if preview.get('available') else 1
+
+        # Actual rollback
+        restored = rollback_last()
+        if restored:
+            print(f"✅ Restored {len(restored)} file(s)", file=sys.stderr)
+        else:
+            print("ℹ️  No pre-sync backups found in .sync/backups", file=sys.stderr)
+            print("Tip: backups are created automatically when applying sync operations", file=sys.stderr)
+        for f in restored:
+            print(f)
+        return 0 if restored else 1
+
+    # ---------- ERRORS ----------
+    if args.cmd == 'errors':
+        from state_manager import StateManager  # type: ignore
+        sm = StateManager()
+        state = sm.get_sync_state()
+        errors = state.get('errors', [])
+        # Friendly
+        try:
+            n = len(errors)
+            if n:
+                print(f"Recent errors: {n}", file=sys.stderr)
+                print("Tip: run 'bmad-sync health' and inspect logs for details", file=sys.stderr)
+            else:
+                print("No recent errors recorded", file=sys.stderr)
+        except Exception:
+            pass
+        print(json.dumps(errors, indent=2))
+        return 0
+
+    # ---------- DASHBOARD ----------
+    if args.cmd == 'dashboard':
+        from dashboard import Dashboard  # type: ignore
+        dash = Dashboard()
+
+        if args.watch:
+            dash.watch_mode(interval_seconds=args.interval)
+        else:
+            print(dash.render_dashboard(detailed=args.detailed))
+        return 0
+
+    # ---------- TRENDS ----------
+    if args.cmd == 'trends':
+        from history import HistoryTracker  # type: ignore
+        tracker = HistoryTracker()
+        print(tracker.render_trends(days=args.days))
+        return 0
+
+    # ---------- PERFORMANCE ----------
+    if args.cmd == 'performance':
+        from metrics import MetricsCollector  # type: ignore
+        metrics = MetricsCollector()
+        print(metrics.render_performance_report(days=args.days))
+        return 0
+
+    # ---------- EXPORT ----------
+    if args.cmd == 'export':
+        from exporter import ReportExporter  # type: ignore
+        exporter = ReportExporter()
+        output_path = Path(args.output)
+
+        print(f"Exporting {args.type} report to {output_path}...", file=sys.stderr)
+
+        try:
+            if args.type == 'dashboard':
+                exporter.export_dashboard(output_path, format=args.format)
+            elif args.type == 'history':
+                exporter.export_history(output_path, format=args.format, days=args.days)
+            elif args.type == 'metrics':
+                exporter.export_metrics(output_path, format=args.format, days=args.days)
+            elif args.type == 'full':
+                exporter.export_full_report(output_path, format=args.format, days=args.days)
+
+            print(f"✅ Report exported successfully", file=sys.stderr)
+            return 0
+        except Exception as e:
+            print(f"❌ Export failed: {e}", file=sys.stderr)
+            return 1
+
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

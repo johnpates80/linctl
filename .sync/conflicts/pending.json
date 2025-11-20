@@ -1,0 +1,32 @@
+[
+  {
+    "bmad_state": "in-progress",
+    "bmad_updated": "2025-11-06T14:00:00Z",
+    "conflict_id": "c-1-2-content-discovery-20251106183351",
+    "conflict_type": "state_mismatch",
+    "content_key": "1-2-content-discovery",
+    "detected_at": "2025-11-06T18:33:51.052011",
+    "linear_state": "Done",
+    "linear_updated": "2025-11-06T15:00:00Z"
+  },
+  {
+    "bmad_state": "in-progress",
+    "bmad_updated": "2025-11-06T11:31:03.717155Z",
+    "conflict_id": "c-1-1-hello-20251106193053",
+    "conflict_type": "state_mismatch",
+    "content_key": "1-1-hello",
+    "detected_at": "2025-11-06T19:30:53.717514",
+    "linear_state": "In Review",
+    "linear_updated": "2025-11-06T11:30:58.717498Z"
+  },
+  {
+    "bmad_state": "in-progress",
+    "bmad_updated": "2025-11-06T11:43:47.644820Z",
+    "conflict_id": "c-1-1-hello-20251106194337",
+    "conflict_type": "state_mismatch",
+    "content_key": "1-1-hello",
+    "detected_at": "2025-11-06T19:43:37.645180",
+    "linear_state": "In Review",
+    "linear_updated": "2025-11-06T11:43:42.645162Z"
+  }
+]

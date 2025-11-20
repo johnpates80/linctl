@@ -114,6 +114,23 @@ linctl issue list --sort updated
 linctl issue search "login bug" --team ENG
 linctl issue search "customer:" --include-completed --include-archived
 
+# Filter by project and labels (AND semantics for multiple labels)
+linctl issue list --project PROJECT-UUID
+linctl issue list --label "bug,backend"
+linctl issue search "epic" --project PROJECT-UUID --label "bug"
+
+# Advanced label operators
+linctl issue list --label-any "bug,backend"             # OR semantics
+linctl issue list --label-not "wontfix,duplicate"       # Exclude these labels
+linctl issue list --unlabeled                            # Only issues with no labels
+linctl issue search "auth" --label-any "bug,urgent"
+
+# Parent filters
+linctl issue list --parent RAE-123         # Only sub-issues of RAE-123
+linctl issue list --has-parent             # Only sub-issues (any parent)
+linctl issue list --no-parent              # Only top-level issues (no parent)
+linctl issue search "payment" --parent RAE-123
+
 # List recent issues (last 2 weeks instead of default 6 months)
 linctl issue list --newer-than 2_weeks_ago
 
@@ -130,6 +147,8 @@ linctl issue get LIN-123
 linctl issue create --title "Bug fix" --team ENG
 # Create with labels
 linctl issue create --title "Feature" --team ENG --label "backend,api"
+# Create as sub-issue under RAE-123
+linctl issue create --title "Implement worker" --team ENG --parent RAE-123
 
 # Assign issue to yourself
 linctl issue assign LIN-123
@@ -267,6 +286,16 @@ linctl issue ls [flags]     # Short alias
   -l, --limit int          Maximum results (default 50)
   -o, --sort string        Sort order: linear (default), created, updated
   -n, --newer-than string  Show items created after this time (default: 6_months_ago, use 'all_time' for no filter)
+      --project string     Filter by project ID (UUID)
+      --label string       Filter by labels (comma-separated names). AND semantics when multiple labels provided.
+      --label-any string   Match any labels (comma-separated). OR semantics.
+      --label-not string   Exclude issues that have any of these labels.
+      --unlabeled          Only issues with no labels (cannot combine with other label filters)
+      --parent string      Filter by parent issue identifier (e.g., 'RAE-123')
+      --has-parent         Only sub-issues (issues with a parent)
+      --no-parent          Only top-level issues (no parent)
+
+# Note: The same flags apply to `issue search` in addition to `--include-archived`.
 
 # Get issue details (shows parent and sub-issues)
 linctl issue get <issue-id>
@@ -283,6 +312,7 @@ linctl issue new [flags]      # Alias
   -m, --assign-me          Assign to yourself
   --project string         Project UUID (or 'unassigned')
   --label string           Comma-separated label names or IDs (e.g., "bug,urgent")
+  --parent string          Parent issue identifier (e.g., 'RAE-123')
 
 # Assign issue to yourself
 linctl issue assign <issue-id>
@@ -301,6 +331,7 @@ linctl issue edit <issue-id> [flags]    # Alias
   --label string           Set labels (comma-separated names/IDs, or "" to clear all)
   --add-label string       Add labels incrementally (comma-separated)
   --remove-label string    Remove labels incrementally (comma-separated)
+  --parent string          Set parent issue by identifier (or 'unassigned' to remove)
 
 # Label Precedence: If --label is provided, --add-label and --remove-label are ignored
 
@@ -443,9 +474,9 @@ linctl comment create LIN-456 --body "@john please review this PR"
 linctl issue list
 ```
 ```
-ID       Title                State        Assignee    Team  Priority
-LIN-123  Fix authentication   In Progress  john@co.com ENG   High
-LIN-124  Update documentation Done         jane@co.com DOC   Normal
+TITLE                  STATE         ASSIGNEE    TEAM  PROJECT                 PARENT   LABELS         CREATED     URL
+Fix authentication     In Progress   John Doe    ENG   Backend Revamp          RAE-120   bug, backend   2025-07-12  https://linear.app/.../fix-authentication
+Update documentation   Done          Jane Smith  DOC   Docs Refresh            -         -              2025-07-11  https://linear.app/.../update-documentation
 ```
 
 ### Plaintext Format
