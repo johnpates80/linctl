@@ -1,0 +1,409 @@
+#!/usr/bin/env bash
+# BMAD Linear Interactive Menu System
+# Provides intuitive menu-based interface for BMAD ↔ Linear sync operations
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BMAD_SYNC="${SCRIPT_DIR}/bmad-sync"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SYNC_DIR="${PROJECT_ROOT}/.sync"
+STATE_DIR="${SYNC_DIR}/state"
+
+# Verify dependencies
+check_dependencies() {
+    if ! command -v gum &> /dev/null; then
+        echo -e "${RED}Error: gum is not installed${NC}"
+        echo "Install with: brew install gum"
+        exit 1
+    fi
+
+    if [[ ! -x "$BMAD_SYNC" ]]; then
+        echo -e "${RED}Error: bmad-sync not found at ${BMAD_SYNC}${NC}"
+        exit 1
+    fi
+}
+
+# Load sync state to determine available options
+load_sync_state() {
+    local state_file="${STATE_DIR}/sync_state.json"
+    if [[ -f "$state_file" ]]; then
+        SYNC_STATE=$(cat "$state_file")
+    else
+        SYNC_STATE="{}"
+    fi
+}
+
+# Show help
+show_help() {
+    gum style \
+        --border double \
+        --border-foreground 212 \
+        --padding "1 2" \
+        --margin "1 2" \
+        "$(cat <<EOF
+BMAD Linear Menu System
+
+Interactive interface for BMAD ↔ Linear synchronization.
+
+Available Commands:
+  sync     - Sync operations (discover, plan, apply)
+  status   - View sync status and health
+  resolve  - Conflict resolution interface
+  config   - Configuration management
+
+Keyboard Shortcuts:
+  h        - Show this help
+  q        - Quit
+  esc      - Go back to previous menu
+EOF
+)"
+}
+
+# Main menu
+main_menu() {
+    while true; do
+        load_sync_state
+
+        gum style \
+            --border double \
+            --border-foreground 212 \
+            --padding "1 2" \
+            --width 60 \
+            "BMAD ↔ Linear Sync System" \
+            "Interactive Menu"
+
+        CHOICE=$(gum choose \
+            "🔄 Sync Operations" \
+            "📊 Status & Health" \
+            "⚠️  Resolve Conflicts" \
+            "⚙️  Configuration" \
+            "❓ Help" \
+            "🚪 Exit" \
+            --header "Select an option:" \
+            --header.foreground="212")
+
+        case "$CHOICE" in
+            "🔄 Sync Operations")
+                sync_menu
+                ;;
+            "📊 Status & Health")
+                status_menu
+                ;;
+            "⚠️  Resolve Conflicts")
+                resolve_menu
+                ;;
+            "⚙️  Configuration")
+                config_menu
+                ;;
+            "❓ Help")
+                show_help
+                ;;
+            "🚪 Exit")
+                echo "Goodbye!"
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# Sync operations menu
+sync_menu() {
+    while true; do
+        gum style \
+            --border rounded \
+            --padding "1 2" \
+            --width 60 \
+            "Sync Operations"
+
+        CHOICE=$(gum choose \
+            "🔍 Discover Content (Dry Run)" \
+            "📋 Plan Sync" \
+            "▶️  Apply Sync" \
+            "⚡ Quick Sync (Plan + Apply)" \
+            "🔙 Back to Main Menu" \
+            --header "Select sync operation:")
+
+        case "$CHOICE" in
+            "🔍 Discover Content (Dry Run)")
+                run_with_progress "Discovering BMAD content..." \
+                    "$BMAD_SYNC" sync --dry-run --verbose
+                show_result
+                ;;
+            "📋 Plan Sync")
+                run_with_progress "Planning sync operations..." \
+                    "$BMAD_SYNC" sync --dry-run
+                show_result
+                ;;
+            "▶️  Apply Sync")
+                if confirm_action "Apply sync operations to Linear?" \
+                    "This will create/update Linear issues."; then
+                    run_with_progress "Applying sync operations..." \
+                        "$BMAD_SYNC" sync
+                    show_result
+                fi
+                ;;
+            "⚡ Quick Sync (Plan + Apply)")
+                if confirm_action "Run quick sync (plan + apply)?" \
+                    "This will discover, plan, and apply in one step."; then
+                    run_with_progress "Running quick sync..." \
+                        "$BMAD_SYNC" sync
+                    show_result
+                fi
+                ;;
+            "🔙 Back to Main Menu")
+                return
+                ;;
+        esac
+    done
+}
+
+# Status menu
+status_menu() {
+    while true; do
+        gum style \
+            --border rounded \
+            --padding "1 2" \
+            --width 60 \
+            "Status & Health"
+
+        CHOICE=$(gum choose \
+            "🏥 System Health Check" \
+            "✅ Validation Report" \
+            "📜 Recent Errors" \
+            "🕐 State History (24h)" \
+            "🔙 Back to Main Menu" \
+            --header "Select status option:")
+
+        case "$CHOICE" in
+            "🏥 System Health Check")
+                run_with_progress "Checking system health..." \
+                    "$BMAD_SYNC" health
+                show_result
+                ;;
+            "✅ Validation Report")
+                run_with_progress "Running validation..." \
+                    "$BMAD_SYNC" validate
+                show_result
+                ;;
+            "📜 Recent Errors")
+                "$BMAD_SYNC" errors | gum pager
+                ;;
+            "🕐 State History (24h)")
+                "$BMAD_SYNC" state history --recent 24h | gum pager
+                ;;
+            "🔙 Back to Main Menu")
+                return
+                ;;
+        esac
+    done
+}
+
+# Conflict resolution menu
+resolve_menu() {
+    gum style \
+        --border rounded \
+        --padding "1 2" \
+        --width 60 \
+        "Conflict Resolution"
+
+    # Check if conflicts exist
+    local conflicts_file="${SYNC_DIR}/conflicts/pending.json"
+    if [[ ! -f "$conflicts_file" ]] || [[ "$(cat "$conflicts_file")" == "[]" ]]; then
+        gum style \
+            --foreground 2 \
+            --padding "1 2" \
+            "✅ No conflicts detected"
+        sleep 2
+        return
+    fi
+
+    CHOICE=$(gum choose \
+        "📋 View Conflicts" \
+        "🔧 Resolve Conflicts" \
+        "🔙 Back to Main Menu" \
+        --header "Select conflict option:")
+
+    case "$CHOICE" in
+        "📋 View Conflicts")
+            cat "$conflicts_file" | gum pager
+            ;;
+        "🔧 Resolve Conflicts")
+            gum style \
+                --foreground 3 \
+                "Conflict resolution UI coming in Story 2.3"
+            sleep 2
+            ;;
+        "🔙 Back to Main Menu")
+            return
+            ;;
+    esac
+}
+
+# Configuration menu
+config_menu() {
+    while true; do
+        gum style \
+            --border rounded \
+            --padding "1 2" \
+            --width 60 \
+            "Configuration Management"
+
+        CHOICE=$(gum choose \
+            "📄 View Configuration" \
+            "🔍 View State Mappings" \
+            "🧪 Test State Conversion" \
+            "🔙 Back to Main Menu" \
+            --header "Select config option:")
+
+        case "$CHOICE" in
+            "📄 View Configuration")
+                if [[ -f "${SYNC_DIR}/config/sync_config.yaml" ]]; then
+                    cat "${SYNC_DIR}/config/sync_config.yaml" | gum pager
+                else
+                    gum style --foreground 1 "Configuration file not found"
+                    sleep 2
+                fi
+                ;;
+            "🔍 View State Mappings")
+                "$BMAD_SYNC" state convert --show-mappings | gum pager
+                ;;
+            "🧪 Test State Conversion")
+                test_state_conversion
+                ;;
+            "🔙 Back to Main Menu")
+                return
+                ;;
+        esac
+    done
+}
+
+# Test state conversion interactively
+test_state_conversion() {
+    gum style "Test State Conversion"
+
+    DIRECTION=$(gum choose "BMAD → Linear" "Linear → BMAD" --header "Select conversion direction:")
+
+    if [[ "$DIRECTION" == "BMAD → Linear" ]]; then
+        STATE=$(gum input --placeholder "Enter BMAD state (e.g., in-progress)")
+        TYPE=$(gum choose "story" "epic" --header "Content type:")
+
+        RESULT=$("$BMAD_SYNC" state convert --from-bmad "$STATE" --content-type "$TYPE" 2>&1)
+
+        gum style \
+            --border rounded \
+            --padding "1 2" \
+            "Result: ${RESULT}"
+    else
+        STATE=$(gum input --placeholder "Enter Linear state (e.g., In Progress)")
+        TYPE=$(gum choose "story" "epic" --header "Content type:")
+
+        RESULT=$("$BMAD_SYNC" state convert --from-linear "$STATE" --content-type "$TYPE" 2>&1)
+
+        gum style \
+            --border rounded \
+            --padding "1 2" \
+            "Result: ${RESULT}"
+    fi
+
+    sleep 3
+}
+
+# Run command with progress indicator
+run_with_progress() {
+    local message="$1"
+    shift
+    local output_file=$(mktemp)
+
+    gum spin --spinner dot --title "$message" -- \
+        bash -c "$* > $output_file 2>&1"
+
+    LAST_OUTPUT=$(cat "$output_file")
+    LAST_EXIT_CODE=$?
+    rm -f "$output_file"
+
+    return $LAST_EXIT_CODE
+}
+
+# Show command result
+show_result() {
+    if [[ $LAST_EXIT_CODE -eq 0 ]]; then
+        gum style \
+            --foreground 2 \
+            --border rounded \
+            --padding "1 2" \
+            "✅ Operation completed successfully"
+
+        if [[ -n "$LAST_OUTPUT" ]]; then
+            echo "$LAST_OUTPUT" | gum pager
+        fi
+    else
+        gum style \
+            --foreground 1 \
+            --border rounded \
+            --padding "1 2" \
+            "❌ Operation failed (exit code: $LAST_EXIT_CODE)"
+
+        if [[ -n "$LAST_OUTPUT" ]]; then
+            echo "$LAST_OUTPUT" | gum pager
+        fi
+    fi
+}
+
+# Confirm action
+confirm_action() {
+    local title="$1"
+    local description="$2"
+
+    gum style \
+        --border rounded \
+        --border-foreground 3 \
+        --padding "1 2" \
+        "$title" \
+        "$description"
+
+    gum confirm "Proceed?" && return 0 || return 1
+}
+
+# Main execution
+main() {
+    check_dependencies
+
+    # Handle command-line arguments
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            sync)
+                sync_menu
+                ;;
+            status)
+                status_menu
+                ;;
+            resolve)
+                resolve_menu
+                ;;
+            config)
+                config_menu
+                ;;
+            help|--help|-h)
+                show_help
+                ;;
+            *)
+                echo "Unknown command: $1"
+                echo "Use 'bmad-linear help' for usage information"
+                exit 1
+                ;;
+        esac
+    else
+        main_menu
+    fi
+}
+
+main "$@"

@@ -1,0 +1,155 @@
+# State Mapping Configuration
+# Defines bidirectional mapping between BMAD and Linear states
+# Generated: 2025-11-06
+# Version: 1.0.0
+
+# Story state mappings
+story_states:
+  # BMAD → Linear mapping
+  bmad_to_linear:
+    backlog: "Backlog"
+    drafted: "Backlog"
+    ready-for-dev: "Todo"
+    in-progress: "In Progress"
+    review: "In Review"
+    done: "Done"
+
+  # Linear → BMAD mapping
+  # Note: "Todo" maps to "drafted" by default
+  # Will be promoted to "ready-for-dev" when story context exists
+  linear_to_bmad:
+    Backlog: "backlog"
+    Todo: "drafted"  # Default - see context-aware logic below
+    "In Progress": "in-progress"
+    "In Review": "review"
+    Done: "done"
+
+# Epic state mappings
+epic_states:
+  # BMAD → Linear mapping
+  bmad_to_linear:
+    backlog: "Backlog"
+    contexted: "Todo"
+    ready-for-dev: "Todo"
+    in-progress: "In Progress"
+    review: "In Review"
+    done: "Done"
+
+  # Linear → BMAD mapping
+  linear_to_bmad:
+    Backlog: "backlog"
+    Todo: "contexted"
+    "In Progress": "in-progress"
+    "In Review": "review"
+    Done: "done"
+
+# Mapping rationale and special cases
+mapping_rationale:
+  drafted_vs_ready_for_dev: |
+    Both "drafted" and "ready-for-dev" map to Linear "Todo" because:
+    - Linear has fewer workflow states than BMAD
+    - "drafted" = story written but not reviewed
+    - "ready-for-dev" = story reviewed and approved with context
+    - Both represent "not yet started work" from Linear's perspective
+
+    When syncing Linear "Todo" → BMAD, use context awareness:
+    - If story context file ({{story_key}}.context.xml) exists → "ready-for-dev"
+    - Otherwise → "drafted"
+
+  in_review_state: |
+    BMAD "review" maps to Linear "In Review":
+    - BMAD "review" = under SM code review
+    - Linear "In Review" = under peer review
+    - Direct 1:1 mapping maintained
+
+  custom_states: |
+    Projects can define custom states beyond the standard workflow.
+    Unknown states are handled gracefully:
+    - Log warning for unknown state
+    - Use "backlog" as safe default
+    - Allow pass-through for custom Linear project states
+
+# Valid state transitions (used for validation)
+valid_transitions:
+  backlog:
+    - drafted
+  drafted:
+    - ready-for-dev
+    - backlog
+  ready-for-dev:
+    - in-progress
+    - drafted
+  in-progress:
+    - review
+    - ready-for-dev
+  review:
+    - done
+    - in-progress
+  done:
+    - in-progress  # Reopening allowed
+
+# Configuration validation rules
+validation:
+  required_bmad_states:
+    - backlog
+    - drafted
+    - ready-for-dev
+    - in-progress
+    - review
+    - done
+
+  required_linear_states:
+    - Backlog
+    - Todo
+    - In Progress
+    - In Review
+    - Done
+
+  allow_circular_mappings: false
+  warn_on_unmapped_states: true
+  strict_mode: false  # If true, reject unknown states instead of defaulting
+
+# Project-specific overrides
+# Projects can override default mappings by creating:
+# .sync/config/state_mapping.local.yaml
+#
+# Example override:
+# story_states:
+#   bmad_to_linear:
+#     custom-state: "Custom Linear State"
+#   linear_to_bmad:
+#     "Custom Linear State": "custom-state"
+#
+# Override behavior:
+# - local.yaml mappings merge with (and override) this file
+# - custom states added to valid_transitions if defined
+# - validation rules still apply
+
+# Context-aware state resolution
+context_aware_mapping:
+  # When Linear "Todo" needs to map to BMAD
+  # Check these conditions in order:
+  todo_to_bmad_logic:
+    - condition: "story_context_file_exists"
+      result: "ready-for-dev"
+      description: "Story has been contexted and is ready for development"
+    - condition: "default"
+      result: "drafted"
+      description: "Story exists but not yet ready for development"
+
+# State history configuration
+history:
+  enabled: true
+  storage_path: ".sync/state/state_history.json"
+  retention_days: 90
+  include_user: true
+  include_operation: true
+  include_source: true  # 'bmad' or 'linear'
+
+# Conflict detection configuration
+conflicts:
+  enabled: true
+  storage_path: ".sync/conflicts/pending.json"
+  detect_on_sync: true
+  block_invalid_transitions: true
+  allow_force_override: true  # --force flag bypasses validation

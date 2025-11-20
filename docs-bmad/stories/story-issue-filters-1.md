@@ -1,4 +1,4 @@
-# Story 2.1: Issue List Filters by Project and Labels
+    # Story 2.1: Issue List Filters by Project and Labels
 
 **Epic:** Epic 2 - Issue Filtering & Search Enhancements
 **Priority:** P2

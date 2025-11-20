@@ -58,37 +58,7 @@ completed_epics:
 
 # Current Epics and Stories (clean slate)
 current_epics: []
-current_stories:
-  - id: "2-1"
-    slug: "issue-list-filters"
-    title: "Issue List Filters by Project and Labels"
-    status: "done"
-    path: "docs-bmad/stories/story-issue-filters-1.md"
-  - id: "2-2"
-    slug: "issue-list-labels"
-    title: "Show Labels in Issue List Output"
-    status: "done"
-    path: "docs-bmad/stories/story-issue-list-labels-2.md"
-  - id: "2-3"
-    slug: "label-operators"
-    title: "Advanced Label Operators for Issue List/Search"
-    status: "done"
-    path: "docs-bmad/stories/story-issue-label-operators-3.md"
-  - id: "3-1"
-    slug: "parent-flags"
-    title: "Parent Flags on Create/Update"
-    status: "done"
-    path: "docs-bmad/stories/story-parent-flags-3-1.md"
-  - id: "3-2"
-    slug: "parent-filters"
-    title: "Parent Filters for Issue List/Search"
-    status: "done"
-    path: "docs-bmad/stories/story-parent-filters-3-2.md"
-  - id: "3-3"
-    slug: "parent-display"
-    title: "Parent Info in List/Get Outputs"
-    status: "done"
-    path: "docs-bmad/stories/story-parent-display-3-3.md"
+current_stories: []
 
 # Next Steps: Ready for new epic and story creation
 next_milestone: "Define new epic for next development phase"
